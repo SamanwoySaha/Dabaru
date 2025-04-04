@@ -21,7 +21,7 @@ const Navbar = () => {
                 </a>
             </div>
 
-            <div className="flex-1 flex justify-center">
+            <div className="flex-1 flex justify-center ml-[-85px]">
                 <Menubar className="gap-6">
                     <MenubarMenu>
                         <MenubarTrigger>Play</MenubarTrigger>
