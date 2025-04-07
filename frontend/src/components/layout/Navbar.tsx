@@ -10,15 +10,16 @@ import {
     MenubarTrigger,
 } from "@/components/ui/menubar";
 import { SiChessdotcom } from "react-icons/si";
+import { Link } from "react-router";
 
 const Navbar = () => {
     return (
         <nav className="w-full flex items-center justify-between px-6 py-4 shadow-2xs bg-white">
             <div className="flex items-center">
-                <a href="#" className="flex items-center gap-2 font-bold text-xl">
+                <Link to="/" className="flex items-center gap-2 font-bold text-xl">
                     <SiChessdotcom className="text-2xl" />
                     <span className="text-2xl">Dabaru.com</span>
-                </a>
+                </Link>
             </div>
 
             <div className="flex-1 flex justify-center ml-[-85px]">
@@ -108,7 +109,11 @@ const Navbar = () => {
             <div className="flex items-center">
                 <Menubar>
                     <MenubarMenu>
-                        <MenubarTrigger>Log in</MenubarTrigger>
+                        <MenubarTrigger>
+                            <Link to="/Login">
+                                Log in
+                            </Link>
+                        </MenubarTrigger>
                         <MenubarContent>
                             <MenubarItem>Profile</MenubarItem>
                             <MenubarSeparator />
