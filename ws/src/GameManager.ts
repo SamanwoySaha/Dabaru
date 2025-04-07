@@ -5,7 +5,7 @@ import { Game } from "./Game";
 export class GameManager {
     private games: Game[];
     private pendingUser: WebSocket | null;
-    private users: WebSocket[];
+    public users: WebSocket[];
 
     constructor() {
         this.games = [];

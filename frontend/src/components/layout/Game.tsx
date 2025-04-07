@@ -1,20 +1,36 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { useSocket } from "@/hooks/useSocket";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
+import { ratingCalculator } from "@/utils/ratingCalculator";
 
 export const INIT_GAME = "init_game";
 export const MOVE = "move";
 export const GAME_OVER = "game_over";
+export const PLAYER_COUNT = "player_count";
 
 const Game = () => {
     const socket = useSocket();
     const [chess, setChess] = useState(new Chess());
     const [fen, setFen] = useState(chess.fen());
     const [gameState, setGameState] = useState("Waiting for opponent...");
-    const [playerColor, setplayerColor] = useState('');
+    const [playerColor, setplayerColor] = useState("");
     const [isMyTurn, setIsMyTurn] = useState(false);
+    const [whiteTime, setWhiteTime] = useState(300);
+    const [blackTime, setBlackTime] = useState(300);
+    const [timerActive, setTimerActive] = useState(false);
+    const timerRef = useRef<NodeJS.Timeout>();
+    const [moveHistory, setMoveHistory] = useState<string[]>([]);
+    const [yourRating, setYourRating] = useState(1200);
+    const [opponentRating, setOpponentRating] = useState(1200);
+    const [playerCount, setPlayerCount] = useState(0);
+
+    const formatTime = (seconds: number) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+    };
 
     useEffect(() => {
         if (!socket) return;
@@ -23,14 +39,28 @@ const Game = () => {
             const message = JSON.parse(event.data);
 
             switch (message.type) {
+                case PLAYER_COUNT: {
+                    if (playerCount != message.count) {
+                        setPlayerCount(message.count);
+                    }
+                    break;
+                }
                 case INIT_GAME: {
                     const color = message.payload.color;
                     const newChess = new Chess();
                     setChess(newChess);
                     setFen(newChess.fen());
                     setplayerColor(color);
-                    setIsMyTurn(color === 'white');
-                    setGameState(color === 'white' ? 'Your turn!' : "Waiting for opponent...");
+                    setIsMyTurn(color === "white");
+                    setGameState(
+                        color === "white"
+                            ? "Your turn!"
+                            : "Waiting for opponent..."
+                    );
+                    setWhiteTime(300); // Reset timers
+                    setBlackTime(300);
+                    setTimerActive(true);
+                    setMoveHistory([]);
                     console.log(gameState);
                     break;
                 }
@@ -42,67 +72,99 @@ const Game = () => {
                     console.log("Remote move received ", move);
                     break;
                 }
-                case GAME_OVER:
-                    setGameState("Game Over");
+                case GAME_OVER: {
+                    const winner = message.payload.winner;
+                    setTimerActive(false);
+                    if (gameState != "Draw") {
+                        const { newWinnerRating, newLoserRating } =
+                            ratingCalculator(
+                                winner == playerColor
+                                    ? yourRating
+                                    : opponentRating,
+                                winner == playerColor
+                                    ? opponentRating
+                                    : yourRating
+                            );
+
+                        setYourRating(
+                            winner == playerColor
+                                ? newWinnerRating
+                                : newLoserRating
+                        );
+                    }
+                    setGameState(`${winner} wins`);
                     console.log("game over");
                     break;
+                }
             }
         };
     }, [socket, chess, playerColor]);
 
     const makeAMove = useCallback(
-        (move: {from: string, to: string}, isRemoteMove = false) => {
-          try {         
-            const newChess = new Chess(chess.fen());
-            const result = newChess.move(move);
+        (move: { from: string; to: string }, isRemoteMove = false) => {
+            try {
+                const newChess = new Chess(chess.fen());
+                const result = newChess.move(move);
 
-            if (!result) {
-                setGameState("Illegal move");
+                if (!result) {
+                    setGameState("Illegal move");
+                    return null;
+                }
+
+                setChess(newChess);
+                setFen(newChess.fen());
+                setIsMyTurn(false);
+                setMoveHistory((prev) => [
+                    ...prev,
+                    newChess.history().slice(-1)[0],
+                ]);
+
+                if (!isRemoteMove) {
+                    socket?.send(
+                        JSON.stringify({
+                            type: MOVE,
+                            payload: {
+                                move: move,
+                            },
+                        })
+                    );
+                    return true;
+                }
+
+                setIsMyTurn(newChess.turn() === playerColor[0]);
+                console.log(
+                    "Move made, game state:",
+                    newChess.isGameOver() ? "Game Over" : "In Progress"
+                );
+
+                if (newChess.isGameOver()) {
+                    if (newChess.isCheckmate()) {
+                        setGameState(
+                            `Checkmate! ${
+                                newChess.turn() === "w" ? "black" : "white"
+                            } wins!`
+                        );
+                    } else if (newChess.isDraw()) {
+                        setGameState("Draw");
+                    } else {
+                        setGameState("Game over");
+                    }
+
+                    socket?.send(
+                        JSON.stringify({
+                            type: GAME_OVER,
+                        })
+                    );
+                }
+                return result;
+            } catch (e) {
+                console.error("Error making move:", e);
+                setGameState("Error making move");
                 return null;
             }
-            
-            setChess(newChess);
-            setFen(newChess.fen());
-            setIsMyTurn(false);
-
-            if (!isRemoteMove) {
-                socket?.send(JSON.stringify({
-                    type: MOVE,
-                    payload: {
-                        move: move
-                    }
-                }))
-                return true;
-            } 
-                
-            setIsMyTurn(newChess.turn() === playerColor[0]);
-            console.log("Move made, game state:", newChess.isGameOver() ? "Game Over" : "In Progress");
-                
-            if (newChess.isGameOver()) {
-                if (newChess.isCheckmate()) {
-                    setGameState(
-                        `Checkmate! ${newChess.turn() === "w" ? "black" : "white"} wins!`
-                    );
-                } else if (newChess.isDraw()) {
-                    setGameState("Draw");
-                } else {
-                    setGameState("Game over");
-                }
-                
-                socket?.send(JSON.stringify({
-                    type: GAME_OVER
-                }));
-            }
-            return result;
-            
-
-            
-          } catch (e) {
-            console.error("Error making move:", e);
-            setGameState("Error making move");
-            return null;
-          } 
-    }, [chess, socket]);
+        },
+        [chess, socket]
+    );
 
     function onDrop(sourceSquare, targetSquare) {
         if (!isMyTurn) {
@@ -110,19 +172,50 @@ const Game = () => {
             return false;
         }
         const moveData = {
-          from: sourceSquare,
-          to: targetSquare,
+            from: sourceSquare,
+            to: targetSquare,
         };
-    
+
         const move = makeAMove(moveData, false);
-        
+
         setGameState("Waiting for opponent...");
-    
-        // illegal move    
+
+        // illegal move
         return move !== null;
     }
 
-    
+    // Timer effect
+    useEffect(() => {
+        if (!timerActive) return;
+
+        timerRef.current = setInterval(() => {
+            if (chess.turn() === "w") {
+                setWhiteTime((prev) => Math.max(0, prev - 1));
+            } else {
+                setBlackTime((prev) => Math.max(0, prev - 1));
+            }
+        }, 1000);
+
+        return () => clearInterval(timerRef.current);
+    }, [timerActive, chess.turn()]);
+
+    // Start timer when game begins
+    useEffect(() => {
+        if (playerColor && !timerActive) {
+            setTimerActive(true);
+        }
+    }, [playerColor]);
+
+    // Check for timeout
+    useEffect(() => {
+        if (whiteTime === 0 || blackTime === 0) {
+            setTimerActive(false);
+            setGameState(
+                `Time out! ${whiteTime === 0 ? "Black" : "White"} wins!`
+            );
+            socket?.send(JSON.stringify({ type: GAME_OVER }));
+        }
+    }, [whiteTime, blackTime]);
 
     if (!socket) return <div>Connecting...</div>;
 
@@ -130,17 +223,20 @@ const Game = () => {
         <div>
             <div>{gameState}</div>
             <div>Your color: {playerColor}</div>
-            <div className="flex items-center justify-center" style={{ width: "600px" }}>
+            <div
+                className="flex items-center justify-center"
+                style={{ width: "600px" }}
+            >
                 <Chessboard
                     position={fen}
                     onPieceDrop={onDrop}
-                    autoPromoteToQueen={true} 
+                    autoPromoteToQueen={true}
                     boardOrientation={playerColor}
-                    // customDarkSquareStyle={{ 
+                    // customDarkSquareStyle={{
                     //     backgroundColor: '#0D0A0B', // Dark brown
                     //     color: '#454955' // Light piece color
                     // }}
-                    // customLightSquareStyle={{ 
+                    // customLightSquareStyle={{
                     //     backgroundColor: '#F3EFF5', // Light brown
                     //     color: '#F2EFE9' // Dark piece color
                     // }}
@@ -158,6 +254,49 @@ const Game = () => {
                     // }}
                 />
             </div>
+            <div>
+                <p>{`${playerCount} Players are playing`}</p>
+                <div className="rating-display">
+                    <p>Your rating: <strong>{yourRating}</strong></p>
+                    <p>Opponent rating: {opponentRating || 'Unknown'}</p>
+                </div>
+                <div className="timer-container">
+                    <div
+                        className={`timer ${
+                            chess.turn() === "b" ? "active" : ""
+                        }`}
+                    >
+                        Black: {formatTime(blackTime)}
+                    </div>
+                    <div
+                        className={`timer ${
+                            chess.turn() === "w" ? "active" : ""
+                        }`}
+                    >
+                        White: {formatTime(whiteTime)}
+                    </div>
+                </div>
+                <div className="chess-board-with-notation">
+                    <div className="move-notation left">
+                        {moveHistory
+                            .filter((_, i) => i % 2 === 0)
+                            .map((move, i) => (
+                                <div key={`white-${i}`}>
+                                    {i + 1}. {move}
+                                </div>
+                            ))}
+                    </div>
+                    <div className="move-notation right">
+                        {moveHistory
+                            .filter((_, i) => i % 2 === 1)
+                            .map((move, i) => (
+                                <div key={`black-${i}`}>
+                                    {i + 1}... {move}
+                                </div>
+                            ))}
+                    </div>
+                </div>
+            </div>
             <Button
                 onClick={() => {
                     socket.send(
@@ -174,4 +313,3 @@ const Game = () => {
 };
 
 export default Game;
-
