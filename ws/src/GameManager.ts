@@ -1,6 +1,12 @@
 import { WebSocket } from "ws";
-import { INIT_GAME, MOVE } from "./messages";
+import { INIT_GAME, MOVE, TIME_CONTROL } from "./messages";
 import { Game } from "./Game";
+
+interface QueuedPlayer {
+    socket: WebSocket;
+    timeControl: string;
+    rating?: number;
+}
 
 export class GameManager {
     private games: Game[];
@@ -19,7 +25,7 @@ export class GameManager {
     }
 
     removeUser(socket: WebSocket) {
-        this.users = this.users.filter(user => user !== socket); 
+        this.users = this.users.filter((user) => user !== socket);
         // reconnect logic
     }
 
@@ -28,7 +34,7 @@ export class GameManager {
             const message = JSON.parse(data.toString());
 
             if (message.type == INIT_GAME) {
-                if(this.pendingUser) {
+                if (this.pendingUser) {
                     const game = new Game(this.pendingUser, socket);
                     this.games.push(game);
                     this.pendingUser = null;
@@ -38,11 +44,13 @@ export class GameManager {
             }
 
             if (message.type == MOVE) {
-                const game = this.games.find(game => game.player1 === socket || game.player2 === socket);
+                const game = this.games.find(
+                    (game) => game.player1 === socket || game.player2 === socket
+                );
                 if (game) {
                     game.makeMove(socket, message.payload.move);
                 }
             }
-        })
+        });
     }
 }

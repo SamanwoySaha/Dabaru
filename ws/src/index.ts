@@ -1,4 +1,4 @@
-import { WebSocketServer } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import { GameManager } from './GameManager';
 import { PLAYER_COUNT } from './messages';
 
@@ -19,9 +19,11 @@ wss.on('connection', function connection(ws) {
 
 const broadcastPlayerCount = () => {
   wss.clients.forEach(client => {
-    client.send(JSON.stringify({
-      type: PLAYER_COUNT,
-      count: gameManager.users.length,
-    }));
+    if (client.readyState == WebSocket.OPEN) {
+      client.send(JSON.stringify({
+        type: PLAYER_COUNT,
+        count: gameManager.users.length,
+      }));  
+    }
   });
 }

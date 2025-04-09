@@ -4,11 +4,8 @@ import { useSocket } from "@/hooks/useSocket";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { ratingCalculator } from "@/utils/ratingCalculator";
-
-export const INIT_GAME = "init_game";
-export const MOVE = "move";
-export const GAME_OVER = "game_over";
-export const PLAYER_COUNT = "player_count";
+import { GAME_OVER, INIT_GAME, MOVE, PLAYER_COUNT } from "@/utils/messages";
+import { timeConfig } from "@/utils/timeConfig";
 
 const Game = () => {
     const socket = useSocket();
@@ -17,8 +14,9 @@ const Game = () => {
     const [gameState, setGameState] = useState("Waiting for opponent...");
     const [playerColor, setplayerColor] = useState("");
     const [isMyTurn, setIsMyTurn] = useState(false);
-    const [whiteTime, setWhiteTime] = useState(300);
-    const [blackTime, setBlackTime] = useState(300);
+    const [timeControl, setTimeControl] = useState(timeConfig.RAPID1);
+    const [whiteTime, setWhiteTime] = useState(timeControl.baseTime);
+    const [blackTime, setBlackTime] = useState(timeControl.baseTime);
     const [timerActive, setTimerActive] = useState(false);
     const timerRef = useRef<NodeJS.Timeout>();
     const [moveHistory, setMoveHistory] = useState<string[]>([]);
@@ -57,11 +55,8 @@ const Game = () => {
                             ? "Your turn!"
                             : "Waiting for opponent..."
                     );
-                    setWhiteTime(300); // Reset timers
-                    setBlackTime(300);
                     setTimerActive(true);
                     setMoveHistory([]);
-                    console.log(gameState);
                     break;
                 }
                 case MOVE: {
@@ -109,6 +104,13 @@ const Game = () => {
                 if (!result) {
                     setGameState("Illegal move");
                     return null;
+                }
+
+                // Apply time increment
+                if (newChess.turn() === "b") {
+                    setWhiteTime((prev) => prev + timeControl.increment);
+                } else {
+                    setBlackTime((prev) => prev + timeControl.increment);
                 }
 
                 setChess(newChess);
@@ -223,6 +225,24 @@ const Game = () => {
         <div>
             <div>{gameState}</div>
             <div>Your color: {playerColor}</div>
+            <div>
+                {Object.values(timeConfig).map((control) => (
+                    <Button
+                        key={control.label}
+                        className={`time-control ${
+                            control.label === control.label ? "active" : ""
+                        }`}
+                        onClick={() => {
+                            setTimeControl(control);
+                            setWhiteTime(control.baseTime);
+                            setBlackTime(control.baseTime);
+                        }}
+                    >
+                        <p>{control.label.split(" ")[0]}</p>
+                        <p>{control.label.split(" ")[1]}</p>
+                    </Button>
+                ))}
+            </div>
             <div
                 className="flex items-center justify-center"
                 style={{ width: "600px" }}
@@ -257,8 +277,10 @@ const Game = () => {
             <div>
                 <p>{`${playerCount} Players are playing`}</p>
                 <div className="rating-display">
-                    <p>Your rating: <strong>{yourRating}</strong></p>
-                    <p>Opponent rating: {opponentRating || 'Unknown'}</p>
+                    <p>
+                        Your rating: <strong>{yourRating}</strong>
+                    </p>
+                    <p>Opponent rating: {opponentRating || "Unknown"}</p>
                 </div>
                 <div className="timer-container">
                     <div

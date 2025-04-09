@@ -14,7 +14,7 @@ class GameManager {
         this.addHandler(socket);
     }
     removeUser(socket) {
-        this.users = this.users.filter(user => user !== socket);
+        this.users = this.users.filter((user) => user !== socket);
         // reconnect logic
     }
     addHandler(socket) {
@@ -31,7 +31,7 @@ class GameManager {
                 }
             }
             if (message.type == messages_1.MOVE) {
-                const game = this.games.find(game => game.player1 === socket || game.player2 === socket);
+                const game = this.games.find((game) => game.player1 === socket || game.player2 === socket);
                 if (game) {
                     game.makeMove(socket, message.payload.move);
                 }
