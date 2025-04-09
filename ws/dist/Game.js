@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Game = void 0;
 const chess_js_1 = require("chess.js");
 const messages_1 = require("./messages");
+const uuid_1 = require("uuid");
 class Game {
     constructor(player1, player2) {
         this.moveCount = 0;
@@ -10,6 +11,7 @@ class Game {
         this.player2 = player2;
         this.board = new chess_js_1.Chess();
         this.startTime = new Date();
+        this.gameId = (0, uuid_1.v4)();
         this.player1.send(JSON.stringify({
             type: messages_1.INIT_GAME,
             payload: {

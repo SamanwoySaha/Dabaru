@@ -1,55 +1,118 @@
 import { WebSocket } from "ws";
-import { INIT_GAME, MOVE, TIME_CONTROL } from "./messages";
+import { GAME_START, INIT_GAME, MOVE } from "./messages";
 import { Game } from "./Game";
 
 interface QueuedPlayer {
     socket: WebSocket;
     timeControl: string;
-    rating?: number;
+    rating: number;
+    joinTime: number;
 }
 
 export class GameManager {
     private games: Game[];
-    private pendingUser: WebSocket | null;
+    private queues: Map<string, QueuedPlayer[]>;
+    private readonly MAX_RATING_DIFFERENCE = 200;
+    private readonly WAIT_TIME_TOLERANCE = 30000;
     public users: WebSocket[];
 
     constructor() {
         this.games = [];
-        this.pendingUser = null;
+        this.queues = new Map();
         this.users = [];
     }
 
-    addUser(socket: WebSocket) {
+    addUser(socket: WebSocket, timeControl: string, rating: number) {
         this.users.push(socket);
+        this.addToQueue(socket, timeControl, rating);
         this.addHandler(socket);
     }
 
     removeUser(socket: WebSocket) {
         this.users = this.users.filter((user) => user !== socket);
-        // reconnect logic
+        this.removeFromQueue(socket);
+    }
+
+    private addToQueue(socket: WebSocket, timeControl: string, rating: number) {
+        if (!this.queues.has(timeControl)) {
+            this.queues.set(timeControl, []);
+        }
+        const queue = this.queues.get(timeControl)!;
+        queue.push({ socket, timeControl, rating, joinTime: Date.now() });
+        this.tryMatchPlayers(timeControl);
+    }
+
+    private removeFromQueue(socket: WebSocket) {
+        this.queues.forEach((queue, timeControl) => {
+            this.queues.set(timeControl, queue.filter((player) => player.socket !== socket));
+        })
+    }
+
+    private tryMatchPlayers(timeControl: string) {
+        const queue = this.queues.get(timeControl);
+        if (!queue || queue.length < 2) return;
+
+        queue.sort((a, b) => a.rating - b.rating);
+
+        let bestPairIndex = -1;
+        let smallestRatingDiff = Infinity;
+
+        for (let i=0; i<queue.length-1; i++) {
+            const player1 = queue[i];
+            const player2 = queue[i+1];
+            const ratingDiff = Math.abs(player1.rating - player2.rating);
+
+            const waitedTooLong = 
+                Date.now() - player1.joinTime > this.WAIT_TIME_TOLERANCE ||
+                Date.now() - player2.joinTime > this.WAIT_TIME_TOLERANCE;
+
+            const isEligible = ratingDiff <= this.MAX_RATING_DIFFERENCE || waitedTooLong;
+
+            if (isEligible && ratingDiff < smallestRatingDiff) {
+                smallestRatingDiff = ratingDiff;
+                bestPairIndex = i;
+            }
+        }
+
+        if (bestPairIndex != -1) {
+            const [player1, player2] = queue.splice(bestPairIndex, 2);
+            const game = new Game(player1.socket, player2.socket);
+
+            player1.socket.send(JSON.stringify({
+                type: GAME_START,
+                payload: {
+                    color: "white",
+                    opponentRating: player2.rating,
+                    timeControl: timeControl,
+                    gameId: game.gameId
+                }
+            }));
+            player2.socket.send(JSON.stringify({
+                type: GAME_START,
+                payload: {
+                    color: "black",
+                    opponentRating: player1.rating,
+                    timeControl: timeControl,
+                    gameId: game.gameId
+                }
+            }));
+
+            this.games.push(game);
+            this.queues.set(timeControl, queue);
+        }
     }
 
     private addHandler(socket: WebSocket) {
         socket.on("message", (data) => {
             const message = JSON.parse(data.toString());
 
-            if (message.type == INIT_GAME) {
-                if (this.pendingUser) {
-                    const game = new Game(this.pendingUser, socket);
-                    this.games.push(game);
-                    this.pendingUser = null;
-                } else {
-                    this.pendingUser = socket;
-                }
-            }
-
-            if (message.type == MOVE) {
-                const game = this.games.find(
-                    (game) => game.player1 === socket || game.player2 === socket
-                );
-                if (game) {
-                    game.makeMove(socket, message.payload.move);
-                }
+            switch (message.type) {
+                case MOVE: 
+                    const game = this.games.find(
+                        (game) => game.player1 === socket || game.player2 === socket
+                    );
+                    if (game) game.makeMove(socket, message.payload.move);
+                    break;
             }
         });
     }

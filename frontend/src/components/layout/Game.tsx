@@ -4,7 +4,13 @@ import { useSocket } from "@/hooks/useSocket";
 import { Chess } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import { ratingCalculator } from "@/utils/ratingCalculator";
-import { GAME_OVER, INIT_GAME, MOVE, PLAYER_COUNT } from "@/utils/messages";
+import {
+    GAME_OVER,
+    GAME_START,
+    INIT_GAME,
+    MOVE,
+    PLAYER_COUNT,
+} from "@/utils/messages";
 import { timeConfig } from "@/utils/timeConfig";
 
 const Game = () => {
@@ -23,6 +29,7 @@ const Game = () => {
     const [yourRating, setYourRating] = useState(1200);
     const [opponentRating, setOpponentRating] = useState(1200);
     const [playerCount, setPlayerCount] = useState(0);
+    const [gameId, setGameId] = useState("");
 
     const formatTime = (seconds: number) => {
         const mins = Math.floor(seconds / 60);
@@ -45,6 +52,18 @@ const Game = () => {
                 }
                 case INIT_GAME: {
                     const color = message.payload.color;
+
+                    setGameState(
+                        color === "white"
+                            ? "Your turn!"
+                            : "Waiting for opponent..."
+                    );
+
+                    break;
+                }
+                case GAME_START: {
+                    const { color, opponentRating, timeControl, gameId } =
+                        message.payload;
                     const newChess = new Chess();
                     setChess(newChess);
                     setFen(newChess.fen());
@@ -55,8 +74,13 @@ const Game = () => {
                             ? "Your turn!"
                             : "Waiting for opponent..."
                     );
+                    setOpponentRating(opponentRating);
+                    setTimeControl(timeConfig[timeControl]);
                     setTimerActive(true);
                     setMoveHistory([]);
+                    setWhiteTime(timeConfig[timeControl].baseTime);
+                    setBlackTime(timeConfig[timeControl].baseTime);
+                    setGameId(gameId);
                     break;
                 }
                 case MOVE: {
@@ -93,6 +117,10 @@ const Game = () => {
                 }
             }
         };
+
+        socket.onclose = () => {
+            setGameState("Connection lost - reconnecting...")
+        }
     }, [socket, chess, playerColor]);
 
     const makeAMove = useCallback(
@@ -115,7 +143,6 @@ const Game = () => {
 
                 setChess(newChess);
                 setFen(newChess.fen());
-                setIsMyTurn(false);
                 setMoveHistory((prev) => [
                     ...prev,
                     newChess.history().slice(-1)[0],
@@ -130,31 +157,34 @@ const Game = () => {
                             },
                         })
                     );
-                    return true;
+                    setIsMyTurn(false);
+                    setGameState("Waiting for opponent...");
+                } else {
+                    setIsMyTurn(newChess.turn() === playerColor[0]);
+                    if (isMyTurn) {
+                        setGameState("Your turn!");
+                    }
                 }
 
-                setIsMyTurn(newChess.turn() === playerColor[0]);
-                console.log(
-                    "Move made, game state:",
-                    newChess.isGameOver() ? "Game Over" : "In Progress"
-                );
-
                 if (newChess.isGameOver()) {
+                    setTimerActive(false);
+                    let resultMessage = "";
                     if (newChess.isCheckmate()) {
-                        setGameState(
-                            `Checkmate! ${
-                                newChess.turn() === "w" ? "black" : "white"
-                            } wins!`
-                        );
+                        resultMessage = `Checkmate ${newChess.turn() === "w" ? "black" : "white"} wins`;
                     } else if (newChess.isDraw()) {
-                        setGameState("Draw");
+                        resultMessage = "Draw";
                     } else {
-                        setGameState("Game over");
+                        resultMessage = "Stalemate";
                     }
+                    setGameState(resultMessage);
 
                     socket?.send(
                         JSON.stringify({
                             type: GAME_OVER,
+                            payload: {
+                                winner: newChess.turn() === "w" ? "black" : "white",
+                                gameId
+                            }
                         })
                     );
                 }
@@ -165,7 +195,7 @@ const Game = () => {
                 return null;
             }
         },
-        [chess, socket]
+        [chess, socket, playerColor, isMyTurn, timeControl.increment, gameId]
     );
 
     function onDrop(sourceSquare, targetSquare) {
@@ -234,8 +264,6 @@ const Game = () => {
                         }`}
                         onClick={() => {
                             setTimeControl(control);
-                            setWhiteTime(control.baseTime);
-                            setBlackTime(control.baseTime);
                         }}
                     >
                         <p>{control.label.split(" ")[0]}</p>
@@ -319,16 +347,25 @@ const Game = () => {
                     </div>
                 </div>
             </div>
-            <Button
+            <Button 
+                disabled={!!gameId}
                 onClick={() => {
+                    if (!socket) return;
                     socket.send(
                         JSON.stringify({
                             type: INIT_GAME,
+                            payload: {
+                                timeControl: Object.keys(timeConfig).find(
+                                    key => timeConfig[key].label == timeControl.label
+                                ),
+                                rating: yourRating,
+                            },
                         })
                     );
+                    setGameState("Finding Opponent...")
                 }}
             >
-                Play Chess
+                {gameId ? "Game in progress" : "Play Chess"}
             </Button>
         </div>
     );

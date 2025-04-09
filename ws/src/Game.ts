@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { Chess } from 'chess.js'
 import { GAME_OVER, INIT_GAME, MOVE } from "./messages";
+import { v4 as uuidv4 } from 'uuid';
 
 export class Game {
     public player1: WebSocket;
@@ -8,12 +9,14 @@ export class Game {
     private board: Chess;
     private startTime: Date;
     private moveCount = 0;
+    public readonly gameId: string;
 
     constructor(player1: WebSocket, player2: WebSocket) {
         this.player1 = player1;
         this.player2 = player2;
         this.board = new Chess();
         this.startTime = new Date();
+        this.gameId = uuidv4();
         
         this.player1.send(JSON.stringify({
             type: INIT_GAME,
