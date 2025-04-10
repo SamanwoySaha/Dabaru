@@ -12,18 +12,6 @@ class Game {
         this.board = new chess_js_1.Chess();
         this.startTime = new Date();
         this.gameId = (0, uuid_1.v4)();
-        this.player1.send(JSON.stringify({
-            type: messages_1.INIT_GAME,
-            payload: {
-                color: "white"
-            }
-        }));
-        this.player2.send(JSON.stringify({
-            type: messages_1.INIT_GAME,
-            payload: {
-                color: "black"
-            }
-        }));
     }
     makeMove(socket, move) {
         // validate the move using zod

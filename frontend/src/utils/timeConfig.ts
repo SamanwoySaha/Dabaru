@@ -1,4 +1,24 @@
-export const timeConfig = {
+export type TimeControlConfig = {
+    label: string;
+    baseTime: number;
+    increment: number;
+};
+
+export type TimeControlPresets = {
+    BULLET1: TimeControlConfig;
+    BULLET2: TimeControlConfig;
+    BLITZ1: TimeControlConfig;
+    BLITZ2: TimeControlConfig;
+    BLITZ3: TimeControlConfig;
+    BLITZ4: TimeControlConfig;
+    RAPID1: TimeControlConfig;
+    RAPID2: TimeControlConfig;
+    RAPID3: TimeControlConfig;
+    CLASSICAL1: TimeControlConfig;
+    CLASSICAL2: TimeControlConfig;
+};
+
+export const timeConfig: TimeControlPresets = {
     BULLET1: {
         label: "1+0 Bullet",
         baseTime: 60,

@@ -27,7 +27,9 @@ const broadcastPlayerCount = () => {
     if (client.readyState == WebSocket.OPEN) {
       client.send(JSON.stringify({
         type: PLAYER_COUNT,
-        count: gameManager.users.length,
+        payload: {
+          count: gameManager.users.length,
+        }
       }));  
     }
   });

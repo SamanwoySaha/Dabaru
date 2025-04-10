@@ -17,19 +17,6 @@ export class Game {
         this.board = new Chess();
         this.startTime = new Date();
         this.gameId = uuidv4();
-        
-        this.player1.send(JSON.stringify({
-            type: INIT_GAME,
-            payload: {
-                color: "white"
-            }
-        }));
-        this.player2.send(JSON.stringify({
-            type: INIT_GAME,
-            payload: {
-                color: "black"
-            }
-        }));
     }
 
     makeMove(socket: WebSocket, move: {

@@ -57,7 +57,9 @@ const broadcastPlayerCount = () => {
         if (client.readyState == ws_1.default.OPEN) {
             client.send(JSON.stringify({
                 type: messages_1.PLAYER_COUNT,
-                count: gameManager.users.length,
+                payload: {
+                    count: gameManager.users.length,
+                }
             }));
         }
     });

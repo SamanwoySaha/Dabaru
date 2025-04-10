@@ -11,27 +11,38 @@ import {
     MOVE,
     PLAYER_COUNT,
 } from "@/utils/messages";
-import { timeConfig } from "@/utils/timeConfig";
+import { timeConfig, TimeControlConfig } from "@/utils/timeConfig";
+
+type Move = {
+    from: string;
+    to: string;
+    promotion?: string;
+}
+
+type GameMessage = {
+    type: string;
+    payload?: any;
+}
 
 const Game = () => {
     const socket = useSocket();
-    const [chess, setChess] = useState(new Chess());
-    const [fen, setFen] = useState(chess.fen());
-    const [gameState, setGameState] = useState("Waiting for opponent...");
-    const [playerColor, setplayerColor] = useState("");
-    const [isMyTurn, setIsMyTurn] = useState(false);
-    const [timeControl, setTimeControl] = useState(timeConfig.RAPID1);
-    const [whiteTime, setWhiteTime] = useState(timeControl.baseTime);
-    const [blackTime, setBlackTime] = useState(timeControl.baseTime);
-    const [timerActive, setTimerActive] = useState(false);
-    const timerRef = useRef<NodeJS.Timeout>();
+    const [chess, setChess] = useState<Chess>(new Chess());
+    const [fen, setFen] = useState<string>(chess.fen());
+    const [gameState, setGameState] = useState<string>("Waiting for opponent...");
+    const [playerColor, setplayerColor] = useState<"white" | "black" | "">("");
+    const [isMyTurn, setIsMyTurn] = useState<boolean>(false);
+    const [timeControl, setTimeControl] = useState<TimeControlConfig>(timeConfig.RAPID1);
+    const [whiteTime, setWhiteTime] = useState<number>(timeControl.baseTime);
+    const [blackTime, setBlackTime] = useState<number>(timeControl.baseTime);
+    const [timerActive, setTimerActive] = useState<boolean>(false);
+    const timerRef = useRef<NodeJS.Timeout | null>(null);
     const [moveHistory, setMoveHistory] = useState<string[]>([]);
-    const [yourRating, setYourRating] = useState(1200);
-    const [opponentRating, setOpponentRating] = useState(1200);
-    const [playerCount, setPlayerCount] = useState(0);
-    const [gameId, setGameId] = useState("");
+    const [yourRating, setYourRating] = useState<number>(1200);
+    const [opponentRating, setOpponentRating] = useState<number>(1200);
+    const [playerCount, setPlayerCount] = useState<number>(0);
+    const [gameId, setGameId] = useState<string>("");
 
-    const formatTime = (seconds: number) => {
+    const formatTime = (seconds: number): string => {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
         return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
@@ -41,29 +52,17 @@ const Game = () => {
         if (!socket) return;
 
         socket.onmessage = (event) => {
-            const message = JSON.parse(event.data);
+            const message: GameMessage = JSON.parse(event.data);
 
             switch (message.type) {
                 case PLAYER_COUNT: {
-                    if (playerCount != message.count) {
-                        setPlayerCount(message.count);
+                    if (playerCount != message.payload.count) {
+                        setPlayerCount(message.payload.count);
                     }
                     break;
                 }
-                case INIT_GAME: {
-                    const color = message.payload.color;
-
-                    setGameState(
-                        color === "white"
-                            ? "Your turn!"
-                            : "Waiting for opponent..."
-                    );
-
-                    break;
-                }
                 case GAME_START: {
-                    const { color, opponentRating, timeControl, gameId } =
-                        message.payload;
+                    const { color, opponentRating, timeControl, gameId } = message.payload;
                     const newChess = new Chess();
                     setChess(newChess);
                     setFen(newChess.fen());
@@ -75,11 +74,11 @@ const Game = () => {
                             : "Waiting for opponent..."
                     );
                     setOpponentRating(opponentRating);
-                    setTimeControl(timeConfig[timeControl]);
+                    setTimeControl(timeConfig[timeControl as keyof typeof timeConfig]);
                     setTimerActive(true);
                     setMoveHistory([]);
-                    setWhiteTime(timeConfig[timeControl].baseTime);
-                    setBlackTime(timeConfig[timeControl].baseTime);
+                    setWhiteTime(timeConfig[timeControl as keyof typeof timeConfig].baseTime);
+                    setBlackTime(timeConfig[timeControl as keyof typeof timeConfig].baseTime);
                     setGameId(gameId);
                     break;
                 }
@@ -88,11 +87,10 @@ const Game = () => {
                     makeAMove(move, true);
                     setGameState("Your turn!");
                     setIsMyTurn(true);
-                    console.log("Remote move received ", move);
                     break;
                 }
                 case GAME_OVER: {
-                    const winner = message.payload.winner;
+                    const winner: string = message.payload.winner;
                     setTimerActive(false);
                     if (gameState != "Draw") {
                         const { newWinnerRating, newLoserRating } =
@@ -112,7 +110,6 @@ const Game = () => {
                         );
                     }
                     setGameState(`${winner} wins`);
-                    console.log("game over");
                     break;
                 }
             }
@@ -121,10 +118,10 @@ const Game = () => {
         socket.onclose = () => {
             setGameState("Connection lost - reconnecting...")
         }
-    }, [socket, chess, playerColor]);
+    }, [socket, chess]);
 
     const makeAMove = useCallback(
-        (move: { from: string; to: string }, isRemoteMove = false) => {
+        (move: Move, isRemoteMove = false) => {
             try {
                 const newChess = new Chess(chess.fen());
                 const result = newChess.move(move);
@@ -134,7 +131,6 @@ const Game = () => {
                     return null;
                 }
 
-                // Apply time increment
                 if (newChess.turn() === "b") {
                     setWhiteTime((prev) => prev + timeControl.increment);
                 } else {
@@ -198,25 +194,23 @@ const Game = () => {
         [chess, socket, playerColor, isMyTurn, timeControl.increment, gameId]
     );
 
-    function onDrop(sourceSquare, targetSquare) {
+    function onDrop(sourceSquare: string, targetSquare: string) {
         if (!isMyTurn) {
             setGameState("Not your turn");
             return false;
         }
-        const moveData = {
+        const moveData: Move = {
             from: sourceSquare,
             to: targetSquare,
         };
 
         const move = makeAMove(moveData, false);
-
         setGameState("Waiting for opponent...");
 
-        // illegal move
         return move !== null;
     }
 
-    // Timer effect
+    // timer effect
     useEffect(() => {
         if (!timerActive) return;
 
@@ -228,7 +222,9 @@ const Game = () => {
             }
         }, 1000);
 
-        return () => clearInterval(timerRef.current);
+        return () => {
+            if (timerRef.current) clearInterval(timerRef.current)
+        };
     }, [timerActive, chess.turn()]);
 
     // Start timer when game begins
@@ -245,9 +241,15 @@ const Game = () => {
             setGameState(
                 `Time out! ${whiteTime === 0 ? "Black" : "White"} wins!`
             );
-            socket?.send(JSON.stringify({ type: GAME_OVER }));
+            socket?.send(JSON.stringify({ 
+                type: GAME_OVER,
+                payload: {
+                    winner: whiteTime == 0 ? "black" : "white",
+                    gameId
+                }
+            }));
         }
-    }, [whiteTime, blackTime]);
+    }, [whiteTime, blackTime, socket, gameId]);
 
     if (!socket) return <div>Connecting...</div>;
 
@@ -356,7 +358,7 @@ const Game = () => {
                             type: INIT_GAME,
                             payload: {
                                 timeControl: Object.keys(timeConfig).find(
-                                    key => timeConfig[key].label == timeControl.label
+                                    key => timeConfig[key as keyof typeof timeConfig].label == timeControl.label
                                 ),
                                 rating: yourRating,
                             },
