@@ -1,9 +1,16 @@
 {
-    "name": "db",
+    "name": "@repo/db",
     "version": "1.0.0",
     "main": "index.js",
     "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "db:generate": "prisma generate",
+        "db:push": "prisma db push --skip-generate",
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "db:dev": "npx prisma migrate dev && npx prisma generate",
+        "db:seed": "prisma db seed"
+    },
+    "prisma": {
+        "seed": "ts-node prisma/seed.ts"
     },
     "keywords": [],
     "author": "",
@@ -11,9 +18,10 @@
     "type": "commonjs",
     "description": "",
     "exports": {
-        "./client": "./index.ts"
+        "./client": "./src/index.ts"
     },
     "dependencies": {
-        "@prisma/client": "^6.6.0"
+        "@prisma/client": "^6.6.0",
+        "prisma": "^6.6.0"
     }
 }
