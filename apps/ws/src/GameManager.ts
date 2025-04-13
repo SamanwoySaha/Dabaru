@@ -1,5 +1,5 @@
 import { WebSocket } from "ws";
-import { GAME_START, INIT_GAME, MOVE } from "./messages";
+import { CHAT, GAME_START, INIT_GAME, MOVE } from "./messages";
 import { Game } from "./Game";
 
 interface QueuedPlayer {
@@ -105,13 +105,39 @@ export class GameManager {
     private addHandler(socket: WebSocket) {
         socket.on("message", (data) => {
             const message = JSON.parse(data.toString());
+            const game = this.games.find(
+                (game) => game.player1 === socket || game.player2 === socket
+            );
+
+            if (!game) return;
 
             switch (message.type) {
-                case MOVE: 
-                    const game = this.games.find(
-                        (game) => game.player1 === socket || game.player2 === socket
-                    );
+                case MOVE:                     
                     if (game) game.makeMove(socket, message.payload.move);
+                    break;
+                
+                case CHAT: 
+                    if (game) {
+                        const isPlayer1 = game.player1 == socket;
+                        const chatPayload = {
+                            sender: message.payload.playerColor,
+                            data: message.payload.data,
+                            timeStamp: Date.now().toString()
+                        }
+
+                        game.chatHistory.push(chatPayload);
+
+                        const opponent = isPlayer1 ? game.player2 : game.player1;
+                        opponent.send(JSON.stringify({
+                            type: CHAT,
+                            payload: chatPayload
+                        }))
+
+                        socket.send(JSON.stringify({
+                            type: CHAT,
+                            payload: chatPayload
+                        }))
+                    }
                     break;
             }
         });

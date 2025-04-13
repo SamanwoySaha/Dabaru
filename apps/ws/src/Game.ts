@@ -10,6 +10,7 @@ export class Game {
     private startTime: Date;
     private moveCount = 0;
     public readonly gameId: string;
+    public chatHistory: {sender: string, data: string, timeStamp: string}[];
 
     constructor(player1: WebSocket, player2: WebSocket) {
         this.player1 = player1;
@@ -17,6 +18,7 @@ export class Game {
         this.board = new Chess();
         this.startTime = new Date();
         this.gameId = uuidv4();
+        this.chatHistory = [];
     }
 
     makeMove(socket: WebSocket, move: {
