@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Mic, MicOff, Video, VideoOff, PhoneOff } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { toast } from "sonner";
 
 export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor: "white" | "black" | "" }) => {
     const [socket, setSocket] = useState<WebSocket | null>(null);
@@ -15,7 +16,7 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
     const [isAudioMuted, setIsAudioMuted] = useState(false);
     const [isVideoOff, setIsVideoOff] = useState(false);
-    const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+    const [disconnectedPlayer, setDisconnectedPlayer] = useState<"white" | "black" | null>(null);
 
     const addedTracks = useRef<Set<string>>(new Set());
 
@@ -37,6 +38,15 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
             if (ws) ws.close();
         };
     }, [gameId, playerColor]);
+
+    useEffect(() => {
+        if (disconnectedPlayer) {
+            toast.error(`${disconnectedPlayer === "white" ? "White" : "Black"} disconnected`, {
+                description: "The video chat has ended",
+            });
+            setDisconnectedPlayer(null);
+        }
+    }, [disconnectedPlayer]);
 
     const cleanupConnection = () => {
         if (pc) {
@@ -63,7 +73,6 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
             blackVideoRef.current.srcObject = null;
         }
 
-        setRemoteStream(null);
         setIsConnected(false);
         addedTracks.current.clear();
     };
@@ -90,10 +99,12 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
         if (socket) {
             socket.send(JSON.stringify({
                 type: 'disconnect',
-                targetPeerId: remotePeerId
+                targetPeerId: remotePeerId,
+                playerColor
             }));
         }
         cleanupConnection();
+        setDisconnectedPlayer(playerColor);
     };
 
     const initiateConnection = async () => {
@@ -121,7 +132,6 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
             if (!addedTracks.current.has(trackId)) {
                 addedTracks.current.add(trackId);
                 
-                // Determine which video element to use based on the remote peer's color
                 const remoteVideoElement = remotePeerId.startsWith('white') 
                     ? whiteVideoRef.current 
                     : blackVideoRef.current;
@@ -145,6 +155,10 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
                 audio: true 
             });
             setLocalStream(stream);
+            
+            // Enable both audio and video by default
+            stream.getAudioTracks().forEach(track => track.enabled = true);
+            stream.getVideoTracks().forEach(track => track.enabled = true);
             
             if (localVideoRef.current) {
                 localVideoRef.current.srcObject = stream;
@@ -173,6 +187,7 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
                     sdp: answer,
                     targetPeerId: message.senderPeerId
                 }));
+                setIsConnected(true);
             } else if (message.type === 'createAnswer') {
                 await pc.setRemoteDescription(message.sdp);
                 setIsConnected(true);
@@ -180,6 +195,7 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
                 await pc.addIceCandidate(message.candidate);
             } else if (message.type === 'disconnect') {
                 cleanupConnection();
+                setDisconnectedPlayer(message.playerColor);
             }
         };
 
@@ -192,13 +208,11 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
                 targetPeerId: remotePeerId
             }));
         }
-
-        setIsConnected(true);
     };
 
     return (
         <div className="fixed top-4 left-4 right-4 flex justify-between pointer-events-none [&>*]:pointer-events-auto">
-            {/* White player video (top-left) */}
+            {/* White player video (always on left) */}
             <Card className="w-40 h-40 overflow-hidden bg-background">
                 <div className="relative w-full h-full">
                     {playerColor === "white" ? (
@@ -206,7 +220,7 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
                             <video 
                                 ref={localVideoRef} 
                                 autoPlay 
-                                // muted
+                                muted
                                 className={`absolute inset-0 w-full h-full object-cover ${isVideoOff ? 'opacity-0' : ''}`}
                             />
                             {isVideoOff && (
@@ -214,26 +228,24 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
                                     <span className="text-2xl">⚪ You</span>
                                 </div>
                             )}
-                            {isConnected && (
-                                <div className="absolute bottom-2 left-2 flex gap-1">
-                                    <Button 
-                                        variant={isAudioMuted ? "destructive" : "outline"} 
-                                        size="iconSm" 
-                                        onClick={toggleAudio}
-                                        className="h-6 w-6"
-                                    >
-                                        {isAudioMuted ? <MicOff size={14} /> : <Mic size={14} />}
-                                    </Button>
-                                    <Button 
-                                        variant={isVideoOff ? "destructive" : "outline"} 
-                                        size="iconSm"
-                                        onClick={toggleVideo}
-                                        className="h-6 w-6"
-                                    >
-                                        {isVideoOff ? <VideoOff size={14} /> : <Video size={14} />}
-                                    </Button>
-                                </div>
-                            )}
+                            <div className="absolute bottom-2 left-2 flex gap-1">
+                                <Button 
+                                    variant={isAudioMuted ? "destructive" : "outline"} 
+                                    size="iconSm" 
+                                    onClick={toggleAudio}
+                                    className="h-6 w-6"
+                                >
+                                    {isAudioMuted ? <MicOff size={14} /> : <Mic size={14} />}
+                                </Button>
+                                <Button 
+                                    variant={isVideoOff ? "destructive" : "outline"} 
+                                    size="iconSm"
+                                    onClick={toggleVideo}
+                                    className="h-6 w-6"
+                                >
+                                    {isVideoOff ? <VideoOff size={14} /> : <Video size={14} />}
+                                </Button>
+                            </div>
                         </>
                     ) : (
                         <>
@@ -252,7 +264,7 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
                 </div>
             </Card>
 
-            {/* Black player video (top-right) */}
+            {/* Black player video (always on right) */}
             <Card className="w-40 h-40 overflow-hidden bg-background">
                 <div className="relative w-full h-full">
                     {playerColor === "black" ? (
@@ -268,26 +280,24 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
                                     <span className="text-2xl">⚫ You</span>
                                 </div>
                             )}
-                            {isConnected && (
-                                <div className="absolute bottom-2 left-2 flex gap-1">
-                                    <Button 
-                                        variant={isAudioMuted ? "destructive" : "outline"} 
-                                        size="iconSm" 
-                                        onClick={toggleAudio}
-                                        className="h-6 w-6"
-                                    >
-                                        {isAudioMuted ? <MicOff size={14} /> : <Mic size={14} />}
-                                    </Button>
-                                    <Button 
-                                        variant={isVideoOff ? "destructive" : "outline"} 
-                                        size="iconSm"
-                                        onClick={toggleVideo}
-                                        className="h-6 w-6"
-                                    >
-                                        {isVideoOff ? <VideoOff size={14} /> : <Video size={14} />}
-                                    </Button>
-                                </div>
-                            )}
+                            <div className="absolute bottom-2 left-2 flex gap-1">
+                                <Button 
+                                    variant={isAudioMuted ? "destructive" : "outline"} 
+                                    size="iconSm" 
+                                    onClick={toggleAudio}
+                                    className="h-6 w-6"
+                                >
+                                    {isAudioMuted ? <MicOff size={14} /> : <Mic size={14} />}
+                                </Button>
+                                <Button 
+                                    variant={isVideoOff ? "destructive" : "outline"} 
+                                    size="iconSm"
+                                    onClick={toggleVideo}
+                                    className="h-6 w-6"
+                                >
+                                    {isVideoOff ? <VideoOff size={14} /> : <Video size={14} />}
+                                </Button>
+                            </div>
                         </>
                     ) : (
                         <>
