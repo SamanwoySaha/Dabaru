@@ -22,7 +22,7 @@ export const VideoChat = ({ gameId, playerColor }: { gameId: string; playerColor
     useEffect(() => {
         if (!gameId || !playerColor) return;
 
-        const ws = new WebSocket('ws://ec2-16-170-223-28.eu-north-1.compute.amazonaws.com:8000');
+        const ws = new WebSocket('ws://localhost:8000');
         setSocket(ws);
 
         ws.onopen = () => {
