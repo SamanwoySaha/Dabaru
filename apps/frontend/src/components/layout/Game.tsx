@@ -19,6 +19,7 @@ import {
     ResizablePanelGroup,
 } from "../ui/resizable";
 import { Input } from "../ui/input";
+import { VideoChat } from "./VideoChat";
 
 type Move = {
     from: string;
@@ -60,6 +61,7 @@ const Game = () => {
     const [gameId, setGameId] = useState<string>("");
     const [message, setMessage] = useState("");
     const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+    const [showVideoChat, setShowVideoChat] = useState(false);
 
     const formatTime = (seconds: number): string => {
         const mins = Math.floor(seconds / 60);
@@ -108,6 +110,7 @@ const Game = () => {
                             .baseTime
                     );
                     setGameId(gameId);
+                    setShowVideoChat(true);
                     break;
                 }
                 case MOVE: {
@@ -309,6 +312,10 @@ const Game = () => {
 
     return (
         <div>
+            {showVideoChat && gameId && playerColor && (
+                <VideoChat gameId={gameId} playerColor={playerColor} />
+            )}
+
             <div>{gameState}</div>
             <div>Your color: {playerColor}</div>
             <div>
