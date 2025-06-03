@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import { Chess } from 'chess.js'
-import { GAME_OVER, INIT_GAME, MOVE } from "./messages";
+import { GAME_OVER, MOVE } from "./messages"; // Removed INIT_GAME as it's not used in this file
 import { v4 as uuidv4 } from 'uuid';
 
 export class Game {
@@ -68,5 +68,47 @@ export class Game {
             }))
         }
         this.moveCount++;
+    }
+
+    public handleResign(resigningSocket: WebSocket) {
+        let winner: string;
+        if (resigningSocket === this.player1) {
+            winner = "black"; // Player 2 (black) wins
+        } else if (resigningSocket === this.player2) {
+            winner = "white"; // Player 1 (white) wins
+        } else {
+            console.error("Resigning socket does not match any player in this game.");
+            return; // Or handle error appropriately
+        }
+
+        // Send GAME_OVER message to both players
+        this.player1.send(JSON.stringify({
+            type: GAME_OVER,
+            payload: { winner, gameId: this.gameId } // Include gameId
+        }));
+        this.player2.send(JSON.stringify({
+            type: GAME_OVER,
+            payload: { winner, gameId: this.gameId } // Include gameId
+        }));
+
+        // Consider internal state update to prevent further moves, though client handling GAME_OVER should suffice.
+        // For example: this.board.load('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'); // Reset board or set a flag
+    }
+
+    public handleAcceptDraw() {
+        // Send GAME_OVER message to both players indicating a draw
+        const gameOverPayload = {
+            type: GAME_OVER,
+            payload: {
+                winner: "draw", // Special value for draw
+                gameId: this.gameId
+            }
+        };
+        this.player1.send(JSON.stringify(gameOverPayload));
+        this.player2.send(JSON.stringify(gameOverPayload));
+
+        // Mark game as over (e.g., set a flag or use chess.js if it supports draw states)
+        // This helps prevent further moves or actions.
+        // Consider adding: private isConcluded: boolean = false; this.isConcluded = true;
     }
 }

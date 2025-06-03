@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "../ui/select";
 import { RootState } from "@/store";
 import {
     setGameFen,
@@ -42,8 +49,14 @@ import {
     INIT_GAME,
     MOVE,
     PLAYER_COUNT,
+    RESIGN, // Import new message type
+    OFFER_DRAW,
+    DRAW_OFFER_RECEIVED,
+    ACCEPT_DRAW,
+    DECLINE_DRAW,
+    DRAW_OFFER_DECLINED,
 } from "@/utils/messages";
-import { timeConfig, TimeControlConfig } from "@/utils/timeConfig";
+import { timeConfig, TimeControlConfig, TimeControlPresets } from "@/utils/timeConfig";
 import {
     ResizableHandle,
     ResizablePanel,
@@ -77,6 +90,8 @@ const Game = () => {
     const [chess, setChess] = useState<Chess>(new Chess()); // Local chess instance
     const [message, setMessage] = useState(""); // For chat input
     const [showVideoChat, setShowVideoChat] = useState(false); // UI state
+    const [selectedTimeControl, setSelectedTimeControl] = useState<keyof TimeControlPresets>('RAPID1');
+    const [drawOfferState, setDrawOfferState] = useState<'idle' | 'sent' | 'received' | 'declined_by_opponent' | 'declined_by_me'>('idle');
 
     // Selectors for Redux state
     const {
@@ -145,6 +160,7 @@ const Game = () => {
 
                     dispatch(setTimerActive(true));
                     dispatch(setGameId(receivedGameId));
+                    setDrawOfferState('idle'); // Reset draw offer state
                     setShowVideoChat(true);
                     break;
                 }
@@ -175,13 +191,19 @@ const Game = () => {
                     break;
                 }
                 case CHAT: {
-                    const { sender, data, timeStamp, gameId: chatGameId }: ChatMessage & {gameId: string} = // Assuming gameId comes with CHAT for context
-                        message.payload;
+                    const { sender, data, timeStamp, gameId: receivedGameId }: { sender: string; data: string; timeStamp: string; gameId: string } = message.payload;
+
+                    // Ensure chat message is for the current game
+                    // gameId below is from redux state (already available in component scope through useSelector)
+                    if (receivedGameId !== gameId) {
+                        console.warn(`Chat message for game ${receivedGameId} ignored, current game is ${gameId}`);
+                        return;
+                    }
 
                     // Adapt to ReduxChatMessage structure
                     const newChatMessage: ReduxChatMessage = {
-                        id: `${chatGameId}-${timeStamp}-${Math.random()}`, // Create a unique ID
-                        sender: playerColor === sender ? 'user' : 'opponent', // Determine if 'user' or 'opponent'
+                        id: `${receivedGameId}-${timeStamp}-${Math.random()}`, // Create a unique ID
+                        sender: playerColor === sender ? 'user' : 'opponent', // playerColor is this client's color, sender is from payload ("white" or "black")
                         text: data,
                         timestamp: timeStamp,
                     };
@@ -189,15 +211,27 @@ const Game = () => {
                     break;
                 }
                 case GAME_OVER: {
-                    const winner: string = message.payload.winner;
+                    const { winner, gameId: gameOverGameId }: { winner: string; gameId?: string } = message.payload;
+
+                    if (gameOverGameId && gameOverGameId !== gameId) { // gameId from Redux
+                        console.warn(`GAME_OVER for game ${gameOverGameId} ignored, current game is ${gameId}`);
+                        return;
+                    }
+
                     dispatch(setTimerActive(false));
 
                     const currentGameState = gameState; // from Redux selector
                     const currentPlayerColor = playerColor; // from Redux selector
                     const currentYourRating = yourRating; // from Redux selector
                     const currentOpponentRating = opponentRating; // from Redux selector
+                    setDrawOfferState('idle'); // Reset draw offer state on game over
 
-                    if (currentGameState !== "Draw" && currentOpponentRating !== null) {
+
+                    if (winner === "draw") {
+                        dispatch(setGameState("Game drawn by agreement."));
+                        // Rating calculation for draw (optional, often K-factor/2 or specific draw logic)
+                        // For now, let's assume no rating change on draw by agreement to keep it simple.
+                    } else if (currentOpponentRating !== null) { // Existing logic for win/loss
                         const { newWinnerRating, newLoserRating } =
                             ratingCalculator(
                                 winner === currentPlayerColor
@@ -215,7 +249,31 @@ const Game = () => {
                         ));
                         // Opponent's rating change would typically be handled server-side or not stored locally for them
                     }
-                    dispatch(setGameState(`${winner} wins`));
+
+                    if (winner !== "draw") { // Only set winner if not a draw (draw message set above)
+                        dispatch(setGameState(`${winner} wins`));
+                    }
+                    break;
+                }
+                case DRAW_OFFER_RECEIVED: {
+                    const { gameId: receivedGameId } = message.payload;
+                    if (receivedGameId !== gameId) { // gameId from Redux
+                        console.warn(`DRAW_OFFER_RECEIVED for game ${receivedGameId} ignored, current game is ${gameId}`);
+                        return;
+                    }
+                    setDrawOfferState('received');
+                    // Optionally, update game status message in Redux
+                    // dispatch(setGameState("Opponent has offered a draw."));
+                    break;
+                }
+                case DRAW_OFFER_DECLINED: {
+                    const { gameId: receivedGameId } = message.payload;
+                    if (receivedGameId !== gameId) { // gameId from Redux
+                        console.warn(`DRAW_OFFER_DECLINED for game ${receivedGameId} ignored, current game is ${gameId}`);
+                        return;
+                    }
+                    setDrawOfferState('declined_by_opponent');
+                    // dispatch(setGameState("Your draw offer was declined."));
                     break;
                 }
             }
@@ -386,8 +444,8 @@ const Game = () => {
                 type: CHAT,
                 payload: {
                     gameId, // gameId from Redux
-                    // playerColor, // playerColor from Redux (server can derive sender or use session)
                     data: message, // Original message text
+                    // playerColor is removed as server will determine sender color
                 },
             })
         );
@@ -541,27 +599,124 @@ const Game = () => {
                         </div>
                     </div>
                     <div className="space-y-3">
+                        <div className="mb-4">
+                            <label htmlFor="time-control-select" className="block text-sm font-medium text-gray-700 mb-1">
+                                Select Game Format:
+                            </label>
+                            <Select
+                                value={selectedTimeControl}
+                                onValueChange={(value) => setSelectedTimeControl(value as keyof TimeControlPresets)}
+                                disabled={!!gameId}
+                            >
+                                <SelectTrigger id="time-control-select" className="w-full">
+                                    <SelectValue placeholder="Select a time control" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {Object.entries(timeConfig).map(([key, config]) => (
+                                        <SelectItem key={key} value={key}>
+                                            {config.label}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
                         <Button
                             className="w-full"
                             disabled={!!gameId}
                             onClick={() => {
                                 if (!socket) return;
                                 dispatch(setGameState("Finding Opponent..."));
-                                const selectedTimeControlLabel = timeControl?.label || timeConfig.RAPID1.label;
-                                const timeControlToSend = Object.keys(timeConfig).find(
-                                    (key) => timeConfig[key as keyof typeof timeConfig].label === selectedTimeControlLabel
-                                ) || 'RAPID1';
-                                socket.send(JSON.stringify({ type: INIT_GAME, payload: { timeControl: timeControlToSend, rating: yourRating } }));
+                                socket.send(JSON.stringify({ type: INIT_GAME, payload: { timeControl: selectedTimeControl, rating: yourRating } }));
                             }}
                         >
                             {gameId ? (playerColor ? "Game in Progress" : "Observing") : "Play Chess"}
                         </Button>
                         {gameId && playerColor && ( /* Only show Resign/Draw if in a game as a player */
                             <>
-                                <Button variant="outline" className="w-full" onClick={() => console.log("Resign clicked (placeholder)")}>Resign</Button>
-                                <Button variant="outline" className="w-full" onClick={() => console.log("Offer Draw clicked (placeholder)")}>Offer Draw</Button>
+                                <Button
+                                    variant="outline"
+                                    className="w-full"
+                                    onClick={() => {
+                                        if (socket && gameId && playerColor) { // Ensure game is active and player is part of it
+                                            socket.send(JSON.stringify({
+                                                type: RESIGN,
+                                                payload: { gameId }
+                                            }));
+                                            // Optionally, update UI state e.g., dispatch(setGameState("Resigning..."));
+                                        } else {
+                                            console.warn("Cannot resign: No active game or socket connection.");
+                                        }
+                                    }}
+                                    disabled={!gameId || !playerColor} // Keep disabled if no game or not a player
+                                >
+                                    Resign
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    className="w-full"
+                                    onClick={() => {
+                                        if (socket && gameId && playerColor) {
+                                            socket.send(JSON.stringify({
+                                                type: OFFER_DRAW,
+                                                payload: { gameId }
+                                            }));
+                                            setDrawOfferState('sent');
+                                            // Optionally, update game status message in Redux
+                                            // dispatch(setGameState("Draw offer sent. Waiting for opponent..."));
+                                        } else {
+                                            console.warn("Cannot offer draw: No active game or socket connection.");
+                                        }
+                                    }}
+                                    disabled={!gameId || !playerColor || drawOfferState === 'sent' || drawOfferState === 'received'}
+                                >
+                                    Offer Draw
+                                </Button>
+                                {drawOfferState === 'sent' && <p className="text-sm text-center mt-2">Draw offer pending...</p>}
+                                {drawOfferState === 'declined_by_opponent' && <p className="text-sm text-center mt-2">Draw offer declined by opponent.</p>}
                             </>
                         )}
+                        {gameId && playerColor && drawOfferState === 'received' && (
+                            <div className="mt-2 space-y-2">
+                                <p className="text-sm text-center font-semibold">Opponent has offered a draw.</p>
+                                <Button
+                                    variant="default" // Or some other variant to highlight
+                                    className="w-full"
+                                    onClick={() => {
+                                        // Logic for ACCEPT_DRAW will be added in next subtask
+                                        if (socket && gameId) {
+                                            socket.send(JSON.stringify({
+                                                type: ACCEPT_DRAW,
+                                                payload: { gameId }
+                                            }));
+                                            // Optimistically assume draw, server will confirm with GAME_OVER
+                                            // setDrawOfferState('idle'); // Or a state like 'accepted'
+                                            // dispatch(setGameState("Draw offer accepted."));
+                                        }
+                                    }}
+                                >
+                                    Accept Draw
+                                </Button>
+                                <Button
+                                    variant="destructive" // Or "outline"
+                                    className="w-full"
+                                    onClick={() => {
+                                        // Logic for DECLINE_DRAW will be added in next subtask
+                                        if (socket && gameId) {
+                                            socket.send(JSON.stringify({
+                                                type: DECLINE_DRAW,
+                                                payload: { gameId }
+                                            }));
+                                            setDrawOfferState('declined_by_me');
+                                            // dispatch(setGameState("Draw offer declined."));
+                                        }
+                                    }}
+                                >
+                                    Decline Draw
+                                </Button>
+                            </div>
+                        )}
+                        {/* Display message if current user declined an offer */}
+                        {drawOfferState === 'declined_by_me' && <p className="text-sm text-center mt-2">You declined the draw offer.</p>}
                     </div>
                 </ResizablePanel>
             </ResizablePanelGroup>

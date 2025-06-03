@@ -1,5 +1,8 @@
 import { WebSocket } from "ws";
-import { CHAT, GAME_START, INIT_GAME, MOVE } from "./messages";
+import {
+    CHAT, GAME_START, INIT_GAME, MOVE, RESIGN,
+    OFFER_DRAW, DRAW_OFFER_RECEIVED, ACCEPT_DRAW, DECLINE_DRAW, DRAW_OFFER_DECLINED, GAME_OVER
+} from "./messages";
 import { Game } from "./Game";
 
 interface QueuedPlayer {
@@ -116,14 +119,17 @@ export class GameManager {
                     if (game) game.makeMove(socket, message.payload.move);
                     break;
                 
-                case CHAT: 
+                case CHAT:
                     if (game) {
-                        const isPlayer1 = game.player1 == socket;
+                        const isPlayer1 = game.player1 === socket;
+                        const senderColor = isPlayer1 ? "white" : "black"; // Assuming player1 is white
+
                         const chatPayload = {
-                            sender: message.payload.playerColor,
+                            sender: senderColor, // Use server-determined color
                             data: message.payload.data,
-                            timeStamp: Date.now().toString()
-                        }
+                            timeStamp: new Date().toISOString(), // Use ISO string for consistency
+                            gameId: game.gameId // Include gameId
+                        };
 
                         game.chatHistory.push(chatPayload);
 
@@ -131,12 +137,45 @@ export class GameManager {
                         opponent.send(JSON.stringify({
                             type: CHAT,
                             payload: chatPayload
-                        }))
+                        }));
 
-                        socket.send(JSON.stringify({
-                            type: CHAT,
-                            payload: chatPayload
-                        }))
+                        // Remove sending back to self, client handles optimistic update
+                    }
+                    break;
+                case RESIGN:
+                    if (game) {
+                        game.handleResign(socket);
+                        // Optionally, clean up the game from this.games array if it's truly over
+                        // and no further interaction (like post-game chat) is expected through it.
+                        // this.games = this.games.filter(g => g.gameId !== game.gameId);
+                    }
+                    break;
+                case OFFER_DRAW:
+                    if (game) {
+                        // Determine the opponent
+                        const opponentSocket = (socket === game.player1) ? game.player2 : game.player1;
+
+                        opponentSocket.send(JSON.stringify({
+                            type: DRAW_OFFER_RECEIVED,
+                            payload: {
+                                gameId: game.gameId,
+                            }
+                        }));
+                        // console.log(`Draw offer relayed for game ${game.gameId} to opponent.`);
+                    }
+                    break;
+                case ACCEPT_DRAW:
+                    if (game) {
+                        game.handleAcceptDraw();
+                    }
+                    break;
+                case DECLINE_DRAW:
+                    if (game) {
+                        const originalOffererSocket = (socket === game.player1) ? game.player2 : game.player1;
+                        originalOffererSocket.send(JSON.stringify({
+                            type: DRAW_OFFER_DECLINED,
+                            payload: { gameId: game.gameId }
+                        }));
                     }
                     break;
             }
