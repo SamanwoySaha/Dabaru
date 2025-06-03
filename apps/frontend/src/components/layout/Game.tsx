@@ -56,6 +56,7 @@ import {
     DECLINE_DRAW,
     DRAW_OFFER_DECLINED,
 } from "@/utils/messages";
+import { toast } from 'sonner'; // Import toast
 import { timeConfig, TimeControlConfig, TimeControlPresets } from "@/utils/timeConfig";
 import {
     ResizableHandle,
@@ -717,6 +718,15 @@ const Game = () => {
                         )}
                         {/* Display message if current user declined an offer */}
                         {drawOfferState === 'declined_by_me' && <p className="text-sm text-center mt-2">You declined the draw offer.</p>}
+                        {gameId && playerColor && ( // Only show if in a game
+                            <Button
+                                variant="outline"
+                                className="w-full mt-4"
+                                onClick={() => toast.success('Test Toast!', { description: 'Sonner is working.' })}
+                            >
+                                Show Test Toast
+                            </Button>
+                        )}
                     </div>
                 </ResizablePanel>
             </ResizablePanelGroup>
