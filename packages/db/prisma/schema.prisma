@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -14,51 +11,70 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(uuid())
-  username      String?   @unique
+  id            String    @id @default(cuid())
+  email         String    @unique
   name          String?
-  email         String   @unique
-  provider      AuthProvider
-  password      String?
-  rating        Int      @default(1200)
-  gamesAsWhite  Game[]   @relation("GamesAsWhite")
-  gamesAsBlack  Game[]   @relation("GamesAsBlack")
-  createdAt     DateTime @default(now())
-  lastLogin     DateTime?
+  username      String?   @unique // Kept from original
+  passwordHash  String?   // For local authentication (replaces/clarifies original 'password')
+  googleId      String?   @unique // For Google OAuth
+  provider      AuthProvider? // Kept from original, made optional if using googleId directly
+  rating        Int       @default(1200)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt // Added as per requirement
+  lastLogin     DateTime? // Kept from original
+
+  gamesAsWhite  GameRecord[] @relation("WhitePlayerGames")
+  gamesAsBlack  GameRecord[] @relation("BlackPlayerGames")
+  gamesWon      GameRecord[] @relation("WinnerGames")
 
   @@index([rating])
 }
 
-model Game {
-  id            String     @id @default(uuid())
-  whitePlayerId String
-  blackPlayerId String
-  whitePlayer   User       @relation("GamesAsWhite", fields: [whitePlayerId], references: [id])
-  blackPlayer   User       @relation("GamesAsBlack", fields: [blackPlayerId], references: [id])
-  status        GameStatus
-  result        GameResult?
-  timeControl   TimeControl
-  startingFen   String     @default("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") // default value for the startingFen
-  currentFen    String?
-  startAt       DateTime   @default(now())
-  endAt         DateTime?
-  moves         Move[]
-  opening       String?
-  event         String?
+model GameRecord {
+  id                      String    @id @default(cuid())
+  timeControl             String    // e.g., "RAPID1", "BLITZ2" (changed from enum)
+  result                  String    // e.g., "WHITE_WINS", "BLACK_WINS", "DRAW" (changed from enum)
+  status                  GameStatus // Kept from original Game model
+  playedAt                DateTime  @default(now()) // Renamed from startAt
+  endAt                   DateTime? // Kept from original Game model
+
+  whitePlayerId           String
+  whitePlayer             User      @relation("WhitePlayerGames", fields: [whitePlayerId], references: [id])
+  whitePlayerRatingBefore Int
+  whitePlayerRatingAfter  Int
+
+  blackPlayerId           String
+  blackPlayer             User      @relation("BlackPlayerGames", fields: [blackPlayerId], references: [id])
+  blackPlayerRatingBefore Int
+  blackPlayerRatingAfter  Int
+
+  winnerId                String?   // Nullable if it's a draw
+  winner                  User?     @relation("WinnerGames", fields: [winnerId], references: [id])
+
+  // Fields kept from original Game model for potential utility
+  startingFen             String    @default("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+  currentFen              String?
+  opening                 String?
+  event                   String?
+
+  moves                   Move[] // Kept relation to Move model
 
   @@index([status, result])
+  @@index([whitePlayerId]) // Added for performance
+  @@index([blackPlayerId]) // Added for performance
+  @@index([winnerId])      // Added for performance
 }
 
 model Move {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid()) // Changed default to cuid
   gameId      String
-  game        Game     @relation(fields: [gameId], references: [id])
+  game        GameRecord @relation(fields: [gameId], references: [id]) // Updated relation
   moveNumber  Int
   from        String
   to          String
   comments    String?
-  before      String
-  after       String
+  before      String  // FEN before move
+  after       String  // FEN after move
   timeTaken   Int?     @default(0)
   createdAt   DateTime @default(now())
   san         String?   
@@ -66,6 +82,7 @@ model Move {
   @@index([gameId])
 }
 
+// Enum kept from original schema
 enum GameStatus {
   IN_PROGRESS
   COMPLETED
@@ -74,19 +91,7 @@ enum GameStatus {
   PLAYER_EXIT
 }
 
-enum GameResult {
-  WHITE_WINS
-  BLACK_WINS
-  DRAW
-}
-
-enum TimeControl {
-  CLASSICAL
-  RAPID
-  BLITZ
-  BULLET
-}
-
+// Enum kept from original schema
 enum AuthProvider {
   EMAIL
   GOOGLE

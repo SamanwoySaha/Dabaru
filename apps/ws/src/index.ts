@@ -10,8 +10,8 @@ wss.on('connection', function connection(ws) {
   ws.on('message', (data) => {
     const message = JSON.parse(data.toString());
     if (message.type == INIT_GAME) {
-      const { timeControl, rating } = message.payload;
-      gameManager.addUser(ws, timeControl, rating);
+      const { timeControl, rating, userId } = message.payload; // userId is optional
+      gameManager.addUser(ws, timeControl, rating, userId);
       broadcastPlayerCount();
     }
   })

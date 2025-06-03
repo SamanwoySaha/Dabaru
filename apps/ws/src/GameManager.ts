@@ -10,6 +10,7 @@ interface QueuedPlayer {
     timeControl: string;
     rating: number;
     joinTime: number;
+    userId?: string; // Optional userId
 }
 
 export class GameManager {
@@ -25,9 +26,9 @@ export class GameManager {
         this.users = [];
     }
 
-    addUser(socket: WebSocket, timeControl: string, rating: number) {
+    addUser(socket: WebSocket, timeControl: string, rating: number, userId?: string) {
         this.users.push(socket);
-        this.addToQueue(socket, timeControl, rating);
+        this.addToQueue(socket, timeControl, rating, userId);
         this.addHandler(socket);
     }
 
@@ -36,12 +37,12 @@ export class GameManager {
         this.removeFromQueue(socket);
     }
 
-    private addToQueue(socket: WebSocket, timeControl: string, rating: number) {
+    private addToQueue(socket: WebSocket, timeControl: string, rating: number, userId?: string) {
         if (!this.queues.has(timeControl)) {
             this.queues.set(timeControl, []);
         }
         const queue = this.queues.get(timeControl)!;
-        queue.push({ socket, timeControl, rating, joinTime: Date.now() });
+        queue.push({ socket, timeControl, rating, userId, joinTime: Date.now() });
         this.tryMatchPlayers(timeControl);
     }
 
@@ -78,23 +79,25 @@ export class GameManager {
         }
 
         if (bestPairIndex != -1) {
-            const [player1, player2] = queue.splice(bestPairIndex, 2);
-            const game = new Game(player1.socket, player2.socket);
+            const [player1Data, player2Data] = queue.splice(bestPairIndex, 2);
+            const game = new Game(player1Data.socket, player2Data.socket, timeControl, player1Data.userId, player2Data.userId);
 
-            player1.socket.send(JSON.stringify({
+            player1Data.socket.send(JSON.stringify({
                 type: GAME_START,
                 payload: {
                     color: "white",
-                    opponentRating: player2.rating,
+                    opponentRating: player2Data.rating,
+                    opponentUserId: player2Data.userId, // Optionally send opponent's userId
                     timeControl: timeControl,
                     gameId: game.gameId
                 }
             }));
-            player2.socket.send(JSON.stringify({
+            player2Data.socket.send(JSON.stringify({
                 type: GAME_START,
                 payload: {
                     color: "black",
-                    opponentRating: player1.rating,
+                    opponentRating: player1Data.rating,
+                    opponentUserId: player1Data.userId, // Optionally send opponent's userId
                     timeControl: timeControl,
                     gameId: game.gameId
                 }
