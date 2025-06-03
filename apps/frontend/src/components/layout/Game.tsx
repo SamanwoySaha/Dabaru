@@ -1,4 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
+import { RootState } from "@/store";
+import {
+    setGameFen,
+    setGameState,
+    setPlayerColor,
+    setIsMyTurn,
+    addMoveToHistory,
+    setGameId,
+    resetGame,
+    makeMove as makeGameMoveAction, // Renamed to avoid conflict
+} from "@/store/slices/gameSlice";
+import {
+    setTimeControlConfiguration,
+    setWhiteTime,
+    setBlackTime,
+    decrementWhiteTime,
+    decrementBlackTime,
+    setTimerActive,
+    resetTimer,
+} from "@/store/slices/timerSlice";
+import {
+    setYourRating,
+    setOpponentRating,
+    setPlayerCount,
+} from "@/store/slices/playerSlice";
+import {
+    addChatMessage,
+    clearChat,
+    ChatMessage as ReduxChatMessage, // Renamed to avoid conflict
+} from "@/store/slices/chatSlice";
 import { Button } from "../ui/button";
 import { useSocket } from "@/hooks/useSocket";
 import { Chess } from "chess.js";
@@ -40,28 +71,31 @@ type GameMessage = {
 
 const Game = () => {
     const socket = useSocket();
-    const [chess, setChess] = useState<Chess>(new Chess());
-    const [fen, setFen] = useState<string>(chess.fen());
-    const [gameState, setGameState] = useState<string>(
-        "Waiting for opponent..."
+    const dispatch = useDispatch();
+
+    // Local state that remains
+    const [chess, setChess] = useState<Chess>(new Chess()); // Local chess instance
+    const [message, setMessage] = useState(""); // For chat input
+    const [showVideoChat, setShowVideoChat] = useState(false); // UI state
+
+    // Selectors for Redux state
+    const {
+        fen,
+        gameState,
+        playerColor,
+        isMyTurn,
+        moveHistory,
+        gameId,
+    } = useSelector((state: RootState) => state.game);
+    const { timeControl, whiteTime, blackTime, timerActive } = useSelector(
+        (state: RootState) => state.timer
     );
-    const [playerColor, setplayerColor] = useState<"white" | "black" | "">("");
-    const [isMyTurn, setIsMyTurn] = useState<boolean>(false);
-    const [timeControl, setTimeControl] = useState<TimeControlConfig>(
-        timeConfig.RAPID1
+    const { yourRating, opponentRating, playerCount } = useSelector(
+        (state: RootState) => state.player
     );
-    const [whiteTime, setWhiteTime] = useState<number>(timeControl.baseTime);
-    const [blackTime, setBlackTime] = useState<number>(timeControl.baseTime);
-    const [timerActive, setTimerActive] = useState<boolean>(false);
-    const timerRef = useRef<NodeJS.Timeout | null>(null);
-    const [moveHistory, setMoveHistory] = useState<string[]>([]);
-    const [yourRating, setYourRating] = useState<number>(1200);
-    const [opponentRating, setOpponentRating] = useState<number>(1200);
-    const [playerCount, setPlayerCount] = useState<number>(0);
-    const [gameId, setGameId] = useState<string>("");
-    const [message, setMessage] = useState("");
-    const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
-    const [showVideoChat, setShowVideoChat] = useState(false);
+    const { chatHistory } = useSelector((state: RootState) => state.chat);
+
+    const timerRef = useRef<NodeJS.Timeout | null>(null); // Keep for interval management
 
     const formatTime = (seconds: number): string => {
         const mins = Math.floor(seconds / 60);
@@ -77,414 +111,460 @@ const Game = () => {
 
             switch (message.type) {
                 case PLAYER_COUNT: {
-                    if (playerCount != message.payload.count) {
-                        setPlayerCount(message.payload.count);
+                    // Assuming playerCount in Redux is already up-to-date via selector
+                    if (playerCount !== message.payload.count) {
+                         dispatch(setPlayerCount(message.payload.count));
                     }
                     break;
                 }
                 case GAME_START: {
-                    const { color, opponentRating, timeControl, gameId } =
-                        message.payload;
-                    const newChess = new Chess();
-                    setChess(newChess);
-                    setFen(newChess.fen());
-                    setplayerColor(color);
-                    setIsMyTurn(color === "white");
-                    setGameState(
-                        color === "white"
-                            ? "Your turn!"
-                            : "Waiting for opponent..."
+                    const {
+                        color,
+                        opponentRating: receivedOpponentRating,
+                        timeControl: receivedTimeControl,
+                        gameId: receivedGameId,
+                    } = message.payload;
+
+                    dispatch(resetGame()); // Resets fen, history, etc.
+                    setChess(new Chess()); // Reset local chess instance
+
+                    dispatch(setPlayerColor(color));
+                    dispatch(setIsMyTurn(color === "white"));
+                    dispatch(
+                        setGameState(
+                            color === "white"
+                                ? "Your turn!"
+                                : "Waiting for opponent..."
+                        )
                     );
-                    setOpponentRating(opponentRating);
-                    setTimeControl(
-                        timeConfig[timeControl as keyof typeof timeConfig]
-                    );
-                    setTimerActive(true);
-                    setMoveHistory([]);
-                    setWhiteTime(
-                        timeConfig[timeControl as keyof typeof timeConfig]
-                            .baseTime
-                    );
-                    setBlackTime(
-                        timeConfig[timeControl as keyof typeof timeConfig]
-                            .baseTime
-                    );
-                    setGameId(gameId);
+                    dispatch(setOpponentRating(receivedOpponentRating));
+
+                    const newTimeControl = timeConfig[receivedTimeControl as keyof typeof timeConfig];
+                    dispatch(setTimeControlConfiguration(newTimeControl));
+                    // Times are set by setTimeControlConfiguration based on its initialTime
+
+                    dispatch(setTimerActive(true));
+                    dispatch(setGameId(receivedGameId));
                     setShowVideoChat(true);
                     break;
                 }
                 case MOVE: {
-                    const move = message.payload;
-                    makeAMove(move, true);
-                    setGameState("Your turn!");
-                    setIsMyTurn(true);
+                    const receivedMove = message.payload.move; // Assuming move is in payload.move
+
+                    // Update local chess instance first to validate and get new FEN
+                    const tempChess = new Chess(fen); // Use FEN from Redux
+                    const moveResult = tempChess.move(receivedMove);
+
+                    if (moveResult) {
+                        dispatch(makeGameMoveAction(receivedMove)); // This action should update fen and moveHistory
+                        dispatch(setGameState("Your turn!"));
+                        dispatch(setIsMyTurn(true)); // It's now this player's turn
+
+                        // Handle increment if applicable (assuming timeControl is in Redux)
+                        if (timeControl) {
+                            if (tempChess.turn() === "b") { // Last move was white's
+                                dispatch(setWhiteTime(whiteTime + timeControl.increment * 1000));
+                            } else { // Last move was black's
+                                dispatch(setBlackTime(blackTime + timeControl.increment * 1000));
+                            }
+                        }
+                    } else {
+                        console.error("Invalid move received from server:", receivedMove);
+                        dispatch(setGameState("Error: Invalid move from server"));
+                    }
                     break;
                 }
                 case CHAT: {
-                    const { sender, data, timeStamp }: ChatMessage =
+                    const { sender, data, timeStamp, gameId: chatGameId }: ChatMessage & {gameId: string} = // Assuming gameId comes with CHAT for context
                         message.payload;
-                    setChatHistory((chats) => [
-                        ...chats,
-                        { sender, data, timeStamp },
-                    ]);
+
+                    // Adapt to ReduxChatMessage structure
+                    const newChatMessage: ReduxChatMessage = {
+                        id: `${chatGameId}-${timeStamp}-${Math.random()}`, // Create a unique ID
+                        sender: playerColor === sender ? 'user' : 'opponent', // Determine if 'user' or 'opponent'
+                        text: data,
+                        timestamp: timeStamp,
+                    };
+                    dispatch(addChatMessage(newChatMessage));
                     break;
                 }
                 case GAME_OVER: {
                     const winner: string = message.payload.winner;
-                    setTimerActive(false);
-                    if (gameState != "Draw") {
+                    dispatch(setTimerActive(false));
+
+                    const currentGameState = gameState; // from Redux selector
+                    const currentPlayerColor = playerColor; // from Redux selector
+                    const currentYourRating = yourRating; // from Redux selector
+                    const currentOpponentRating = opponentRating; // from Redux selector
+
+                    if (currentGameState !== "Draw" && currentOpponentRating !== null) {
                         const { newWinnerRating, newLoserRating } =
                             ratingCalculator(
-                                winner == playerColor
-                                    ? yourRating
-                                    : opponentRating,
-                                winner == playerColor
-                                    ? opponentRating
-                                    : yourRating
+                                winner === currentPlayerColor
+                                    ? currentYourRating
+                                    : currentOpponentRating,
+                                winner === currentPlayerColor
+                                    ? currentOpponentRating
+                                    : currentYourRating
                             );
 
-                        setYourRating(
-                            winner == playerColor
+                        dispatch(setYourRating(
+                            winner === currentPlayerColor
                                 ? newWinnerRating
                                 : newLoserRating
-                        );
+                        ));
+                        // Opponent's rating change would typically be handled server-side or not stored locally for them
                     }
-                    setGameState(`${winner} wins`);
+                    dispatch(setGameState(`${winner} wins`));
                     break;
                 }
             }
         };
 
         socket.onclose = () => {
-            setGameState("Connection lost - reconnecting...");
+            dispatch(setGameState("Connection lost - reconnecting..."));
         };
-    }, [socket, chess]);
+    }, [socket, dispatch, fen, playerCount, gameState, playerColor, yourRating, opponentRating, timeControl, whiteTime, blackTime]);
 
     const makeAMove = useCallback(
         (move: Move, isRemoteMove = false) => {
-            try {
-                const newChess = new Chess(chess.fen());
-                const result = newChess.move(move);
+            // Uses local 'chess' instance for validation, which should be synced with Redux 'fen'
+            // This 'chess' instance is updated via useEffect listening to 'fen' from Redux
+            const localChess = new Chess(fen); // Always use latest FEN from Redux for the new move
+            const result = localChess.move(move);
 
-                if (!result) {
-                    setGameState("Illegal move");
-                    return null;
-                }
-
-                if (newChess.turn() === "b") {
-                    setWhiteTime((prev) => prev + timeControl.increment);
-                } else {
-                    setBlackTime((prev) => prev + timeControl.increment);
-                }
-
-                setChess(newChess);
-                setFen(newChess.fen());
-                setMoveHistory((prev) => [
-                    ...prev,
-                    newChess.history().slice(-1)[0],
-                ]);
-
-                if (!isRemoteMove) {
-                    socket?.send(
-                        JSON.stringify({
-                            type: MOVE,
-                            payload: {
-                                move: move,
-                            },
-                        })
-                    );
-                    setIsMyTurn(false);
-                    setGameState("Waiting for opponent...");
-                } else {
-                    setIsMyTurn(newChess.turn() === playerColor[0]);
-                    if (isMyTurn) {
-                        setGameState("Your turn!");
-                    }
-                }
-
-                if (newChess.isGameOver()) {
-                    setTimerActive(false);
-                    let resultMessage = "";
-                    if (newChess.isCheckmate()) {
-                        resultMessage = `Checkmate ${newChess.turn() === "w" ? "black" : "white"} wins`;
-                    } else if (newChess.isDraw()) {
-                        resultMessage = "Draw";
-                    } else {
-                        resultMessage = "Stalemate";
-                    }
-                    setGameState(resultMessage);
-
-                    socket?.send(
-                        JSON.stringify({
-                            type: GAME_OVER,
-                            payload: {
-                                winner:
-                                    newChess.turn() === "w" ? "black" : "white",
-                                gameId,
-                            },
-                        })
-                    );
-                }
-                return result;
-            } catch (e) {
-                console.error("Error making move:", e);
-                setGameState("Error making move");
+            if (!result) {
+                dispatch(setGameState("Illegal move"));
                 return null;
             }
+
+            // Dispatch action to update fen and move history in Redux
+            // makeGameMoveAction should internally update fen and history
+            dispatch(makeGameMoveAction(move));
+
+            // Handle increment based on Redux state
+            if (timeControl) {
+                 if (localChess.turn() === "b") { // Move was white's
+                    dispatch(setWhiteTime(whiteTime + timeControl.increment * 1000));
+                } else { // Move was black's
+                    dispatch(setBlackTime(blackTime + timeControl.increment * 1000));
+                }
+            }
+
+            if (!isRemoteMove) {
+                socket?.send(
+                    JSON.stringify({
+                        type: MOVE,
+                        payload: { move },
+                    })
+                );
+                dispatch(setIsMyTurn(false));
+                dispatch(setGameState("Waiting for opponent..."));
+            } else {
+                // For remote moves, isMyTurn was already set in the MOVE handler
+                // Game state ("Your turn!") was also set there.
+            }
+
+            if (localChess.isGameOver()) {
+                dispatch(setTimerActive(false));
+                let resultMessage = "";
+                let winner = "";
+                if (localChess.isCheckmate()) {
+                    winner = localChess.turn() === "w" ? "black" : "white";
+                    resultMessage = `Checkmate! ${winner} wins.`;
+                } else if (localChess.isDraw()) {
+                    resultMessage = "Draw";
+                    winner = "draw"; // Or handle differently
+                } else { // Stalemate or other draw conditions
+                    resultMessage = "Stalemate";
+                    winner = "draw"; // Or handle differently
+                }
+                dispatch(setGameState(resultMessage));
+
+                // Send GAME_OVER only if it's the current player's move that ended the game
+                // The server might also determine game over, this handles client-side determination
+                if (!isRemoteMove) {
+                     socket?.send(
+                        JSON.stringify({
+                            type: GAME_OVER,
+                            payload: { winner, gameId },
+                        })
+                    );
+                }
+            }
+            return result;
         },
-        [chess, socket, playerColor, isMyTurn, timeControl.increment, gameId]
+        [dispatch, fen, socket, playerColor, timeControl, whiteTime, blackTime, gameId]
     );
 
     function onDrop(sourceSquare: string, targetSquare: string) {
-        if (!isMyTurn) {
-            setGameState("Not your turn");
+        if (!isMyTurn) { // isMyTurn from Redux
+            dispatch(setGameState("Not your turn"));
             return false;
         }
         const moveData: Move = {
             from: sourceSquare,
             to: targetSquare,
+            // promotion: "q", // Always promote to queen for simplicity, or handle promotion UI
         };
 
-        const move = makeAMove(moveData, false);
-        setGameState("Waiting for opponent...");
+        const moveResult = makeAMove(moveData, false);
+        // Game state for "Waiting for opponent..." is set within makeAMove if it's not a remote move
 
-        return move !== null;
+        return moveResult !== null;
     }
 
     // timer effect
     useEffect(() => {
-        if (!timerActive) return;
+        if (!timerActive || !gameId) { // Ensure timer only runs during an active game
+            if (timerRef.current) clearInterval(timerRef.current);
+            return;
+        }
+
+        // Determine whose turn it is from FEN string (Redux state)
+        const localGame = new Chess(fen);
+        const turn = localGame.turn();
 
         timerRef.current = setInterval(() => {
-            if (chess.turn() === "w") {
-                setWhiteTime((prev) => Math.max(0, prev - 1));
+            if (turn === "w") {
+                dispatch(decrementWhiteTime(1000)); // Decrement by 1 second (1000 ms)
             } else {
-                setBlackTime((prev) => Math.max(0, prev - 1));
+                dispatch(decrementBlackTime(1000)); // Decrement by 1 second (1000 ms)
             }
         }, 1000);
 
         return () => {
             if (timerRef.current) clearInterval(timerRef.current);
         };
-    }, [timerActive, chess.turn()]);
-
-    // Start timer when game begins
-    useEffect(() => {
-        if (playerColor && !timerActive) {
-            setTimerActive(true);
-        }
-    }, [playerColor]);
+    }, [timerActive, fen, dispatch, gameId]);
 
     // Check for timeout
     useEffect(() => {
-        if (whiteTime === 0 || blackTime === 0) {
-            setTimerActive(false);
-            setGameState(
-                `Time out! ${whiteTime === 0 ? "Black" : "White"} wins!`
-            );
+        // Ensure this effect only runs if a game is active and timer is not already stopped
+        if (!gameId || !timerActive) return;
+
+        if (whiteTime <= 0 || blackTime <= 0) {
+            dispatch(setTimerActive(false));
+            const winner = whiteTime <= 0 ? "black" : "white";
+            dispatch(setGameState(`Time out! ${winner === "black" ? "Black" : "White"} wins!`));
+
+            // Send GAME_OVER message to the server
             socket?.send(
                 JSON.stringify({
                     type: GAME_OVER,
                     payload: {
-                        winner: whiteTime == 0 ? "black" : "white",
+                        winner,
                         gameId,
                     },
                 })
             );
         }
-    }, [whiteTime, blackTime, socket, gameId]);
+    }, [whiteTime, blackTime, socket, gameId, dispatch, timerActive]);
+
+    // Local chess instance synchronization with Redux FEN
+    useEffect(() => {
+        const localGame = new Chess(fen); // fen from Redux
+        setChess(localGame); // Update local chess.js instance
+    }, [fen]);
+
 
     const sendMessage = () => {
-        socket?.send(
+        if (!socket || !message.trim() || !gameId) return;
+
+        const chatMsg: ReduxChatMessage = {
+            id: `${gameId}-${Date.now()}-${Math.random()}`, // Temporary unique ID
+            sender: 'user', // This client is always the 'user' for their own messages
+            text: message,
+            timestamp: new Date().toISOString(),
+        };
+
+        // Optimistically update UI
+        dispatch(addChatMessage(chatMsg));
+
+        socket.send(
             JSON.stringify({
                 type: CHAT,
                 payload: {
-                    gameId,
-                    playerColor,
-                    data: message,
+                    gameId, // gameId from Redux
+                    // playerColor, // playerColor from Redux (server can derive sender or use session)
+                    data: message, // Original message text
                 },
             })
         );
-        setMessage("");
+        setMessage(""); // Clear input field
     };
 
-    if (!socket) return <div>Connecting...</div>;
+    if (!socket) return <div className="flex justify-center items-center h-screen">Connecting...</div>;
+
+    // Determine opponent and self based on playerColor
+    const selfIsWhite = playerColor === 'white';
+    const opponentColor = selfIsWhite ? 'black' : 'white';
+    const selfTime = selfIsWhite ? whiteTime : blackTime;
+    const opponentTime = selfIsWhite ? blackTime : whiteTime;
+    const selfRatingToDisplay = yourRating;
+    const opponentRatingToDisplay = opponentRating;
+
+
+    const PlayerInfoPanel = ({
+        isOpponent,
+        colorName,
+        rating,
+        time,
+        isTurn,
+    }: {
+        isOpponent?: boolean;
+        colorName: string;
+        rating: number | null;
+        time: number;
+        isTurn: boolean;
+    }) => (
+        <div className={`p-4 border rounded-lg shadow-md ${isTurn ? "border-green-500 ring-2 ring-green-500" : "border-gray-300"}`}>
+            <div className="flex justify-between items-center mb-2">
+                <span className="font-semibold text-lg">{isOpponent ? `Opponent (${colorName})` : `You (${colorName})`}</span>
+                <span className={`font-bold text-2xl ${isTurn && timerActive ? "text-green-600" : ""}`}>
+                    {formatTime(time / 1000)}
+                </span>
+            </div>
+            <div className="text-sm text-gray-600">Rating: {rating ?? "N/A"}</div>
+        </div>
+    );
 
     return (
-        <div>
-            {showVideoChat && gameId && playerColor && (
-                <VideoChat gameId={gameId} playerColor={playerColor} />
-            )}
+        <div className="flex flex-col h-screen bg-gray-100 p-2">
+            {/* Top bar for global game status and player count */}
+            <div className="mb-2 p-3 bg-white rounded-lg shadow flex justify-between items-center">
+                <h2 className="text-xl font-bold text-gray-700">{gameState}</h2>
+                <div className="text-sm text-gray-600">Players Online: {playerCount}</div>
+            </div>
 
-            <div>{gameState}</div>
-            <div>Your color: {playerColor}</div>
-            <div>
-                {Object.values(timeConfig).map((control) => (
-                    <Button
-                        key={control.label}
-                        className={`time-control ${
-                            control.label === control.label ? "active" : ""
-                        }`}
-                        onClick={() => {
-                            setTimeControl(control);
-                        }}
-                    >
-                        <p>{control.label.split(" ")[0]}</p>
-                        <p>{control.label.split(" ")[1]}</p>
-                    </Button>
-                ))}
-            </div>
-            <div>
-                <p>{`${playerCount} Players are playing`}</p>
-                <div className="rating-display">
-                    <p>
-                        Your rating: <strong>{yourRating}</strong>
-                    </p>
-                    <p>Opponent rating: {opponentRating || "Unknown"}</p>
-                </div>
-                <div className="timer-container">
-                    <div
-                        className={`timer ${
-                            chess.turn() === "b" ? "active" : ""
-                        }`}
-                    >
-                        Black: {formatTime(blackTime)}
-                    </div>
-                    <div
-                        className={`timer ${
-                            chess.turn() === "w" ? "active" : ""
-                        }`}
-                    >
-                        White: {formatTime(whiteTime)}
-                    </div>
-                </div>
-            </div>
-            <ResizablePanelGroup
-                direction="horizontal"
-                className="max-w-md rounded-lg border md:min-w-[80vw]"
-            >
-                <ResizablePanel defaultSize={25}>
-                    <div className="h-[200px] items-center justify-center p-6">
-                        <div>
-                            <p>Chat</p>
-                            <div className="flex justify-between">
-                                <div>White</div>
-                                <div>Black</div>
-                            </div>
-                            {chatHistory.map(({ sender, data, timestamp }) => (
+            <ResizablePanelGroup direction="horizontal" className="flex-grow rounded-lg border bg-white shadow">
+                {/* Left Panel: Video Chat and Chat */}
+                <ResizablePanel defaultSize={25} minSize={20} className="p-4 flex flex-col space-y-4"> {/* Added space-y-4 for consistent spacing */}
+                    {showVideoChat && gameId && playerColor && (
+                        <div className="border rounded-lg overflow-hidden shadow-md max-h-[40vh]"> {/* Added shadow and max-h */}
+                            <VideoChat gameId={gameId} playerColor={playerColor} />
+                        </div>
+                    )}
+                    {/* Ensure chat takes remaining space if video is hidden or present */}
+                    <div className={`flex-grow flex flex-col border rounded-lg p-3 bg-gray-50 shadow-sm ${showVideoChat && gameId && playerColor ? 'min-h-[20vh]' : 'h-full'}`}>
+                        <h3 className="text-lg font-semibold mb-2 border-b pb-2">Chat</h3>
+                        <div className="flex-grow overflow-y-auto mb-3 space-y-2 pr-1">
+                            {chatHistory.map(({ id, sender, text }) => (
                                 <div
-                                    key={timestamp}
-                                    className={`flex ${sender === "white" ? "justify-start" : "justify-end"} mb-2`}
+                                    key={id}
+                                    className={`flex ${sender === 'user' ? "justify-end" : "justify-start"}`}
                                 >
                                     <div
-                                        className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                                            sender === "white"
+                                        className={`max-w-xs lg:max-w-md px-3 py-2 rounded-lg shadow-sm ${
+                                            sender === 'user'
                                                 ? "bg-blue-500 text-white"
                                                 : "bg-gray-200 text-gray-800"
                                         }`}
                                     >
-                                        <div>{data}</div>
+                                        {text}
                                     </div>
                                 </div>
                             ))}
                         </div>
-
-                        <div>
+                        <div className="flex space-x-2">
                             <Input
                                 value={message}
                                 onChange={(e) => setMessage(e.target.value)}
                                 type="text"
-                                placeholder="Enter your message"
+                                placeholder="Type a message..."
+                                className="flex-grow"
+                                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
                             />
                             <Button onClick={sendMessage}>Send</Button>
                         </div>
                     </div>
                 </ResizablePanel>
-                <ResizableHandle />
-                <ResizablePanel defaultSize={50}>
-                    <div className="flex h-[70vh] items-center justify-center p-6">
-                        <div
-                            className="flex items-center justify-center"
-                            style={{ width: "600px" }}
-                        >
-                            <Chessboard
-                                position={fen}
-                                onPieceDrop={onDrop}
-                                autoPromoteToQueen={true}
-                                boardOrientation={playerColor}
-                                // customDarkSquareStyle={{
-                                //     backgroundColor: '#0D0A0B', // Dark brown
-                                //     color: '#454955' // Light piece color
-                                // }}
-                                // customLightSquareStyle={{
-                                //     backgroundColor: '#F3EFF5', // Light brown
-                                //     color: '#F2EFE9' // Dark piece color
-                                // }}
-                                // customSquareStyles={{
-                                //     /* Optional: highlight squares */
-                                //     hover: {
-                                //         backgroundColor: 'rgba(255, 255, 0, 0.4)'
-                                //     },
-                                //     lastMove: {
-                                //         backgroundColor: 'rgba(155, 199, 0, 0.41)'
-                                //     },
-                                //     check: {
-                                //         backgroundColor: 'rgba(255, 0, 0, 0.4)'
-                                //     }
-                                // }}
-                            />
-                        </div>
-                    </div>
-                </ResizablePanel>
-                <ResizableHandle />
-                <ResizablePanel defaultSize={25}>
-                    <div className="flex h-[80vh] items-center justify-center p-6">
-                        <div className="move-notation left">
-                            {moveHistory
-                                .filter((_, i) => i % 2 === 0)
-                                .map((move, i) => (
-                                    <div key={`white-${i}`}>
-                                        {i + 1}. {move}
-                                    </div>
-                                ))}
-                        </div>
-                        <div className="move-notation right">
-                            {moveHistory
-                                .filter((_, i) => i % 2 === 1)
-                                .map((move, i) => (
-                                    <div key={`black-${i}`}>
-                                        {i + 1}... {move}
-                                    </div>
-                                ))}
-                        </div>
-                    </div>
-                </ResizablePanel>
-                <ResizableHandle />
-            </ResizablePanelGroup>
+                <ResizableHandle withHandle className="mx-2 bg-gray-300" />
 
-            <Button
-                disabled={!!gameId}
-                onClick={() => {
-                    if (!socket) return;
-                    socket.send(
-                        JSON.stringify({
-                            type: INIT_GAME,
-                            payload: {
-                                timeControl: Object.keys(timeConfig).find(
-                                    (key) =>
-                                        timeConfig[
-                                            key as keyof typeof timeConfig
-                                        ].label == timeControl.label
-                                ),
-                                rating: yourRating,
-                            },
-                        })
-                    );
-                    setGameState("Finding Opponent...");
-                }}
-            >
-                {gameId ? "Game in progress" : "Play Chess"}
-            </Button>
+                {/* Center Panel: Chessboard and Player Info */}
+                <ResizablePanel defaultSize={50} minSize={40} className="p-4 flex flex-col justify-center items-center">
+                    {gameId && (
+                         <PlayerInfoPanel
+                            isOpponent
+                            colorName={opponentColor.charAt(0).toUpperCase() + opponentColor.slice(1)}
+                            rating={opponentRatingToDisplay}
+                            time={opponentTime}
+                            isTurn={chess.turn() === opponentColor[0] && timerActive}
+                        />
+                    )}
+                    <div className="my-4 w-full max-w-[60vh] aspect-square"> {/* Adjusted for better sizing */}
+                        <Chessboard
+                            position={fen}
+                            onPieceDrop={onDrop}
+                            autoPromoteToQueen={true}
+                            boardOrientation={playerColor || 'white'}
+                            customBoardStyle={{
+                                borderRadius: '4px',
+                                boxShadow: '0 2px 10px rgba(0, 0, 0, 0.2)',
+                            }}
+                            customDarkSquareStyle={{ backgroundColor: '#779952' }}
+                            customLightSquareStyle={{ backgroundColor: '#edeed1' }}
+                        />
+                    </div>
+                    {gameId && (
+                        <PlayerInfoPanel
+                            colorName={playerColor.charAt(0).toUpperCase() + playerColor.slice(1)}
+                            rating={selfRatingToDisplay}
+                            time={selfTime}
+                            isTurn={chess.turn() === playerColor[0] && timerActive}
+                        />
+                    )}
+                </ResizablePanel>
+                <ResizableHandle withHandle className="mx-2 bg-gray-300" />
+
+                {/* Right Panel: Move History and Game Controls */}
+                <ResizablePanel defaultSize={25} minSize={20} className="p-4 flex flex-col">
+                    <div className="flex-grow border rounded-lg p-3 bg-gray-50 mb-4 overflow-hidden">
+                        <h3 className="text-lg font-semibold mb-2 border-b pb-2">Move History</h3>
+                        <div className="overflow-y-auto h-[calc(100%-2.5rem)] pr-1"> {/* Adjust height to enable scroll */}
+                            <ol className="space-y-1 text-sm">
+                                {moveHistory.reduce((acc, move, index) => {
+                                    if (index % 2 === 0) {
+                                        acc.push([move]);
+                                    } else {
+                                        acc[acc.length - 1].push(move);
+                                    }
+                                    return acc;
+                                }, [] as string[][]).map((pair, i) => (
+                                    <li key={i} className="flex">
+                                        <span className="w-6 font-medium">{i + 1}.</span>
+                                        <span className="w-16 truncate">{pair[0]}</span>
+                                        {pair[1] && <span className="w-16 truncate">{pair[1]}</span>}
+                                    </li>
+                                ))}
+                            </ol>
+                        </div>
+                    </div>
+                    <div className="space-y-3">
+                        <Button
+                            className="w-full"
+                            disabled={!!gameId}
+                            onClick={() => {
+                                if (!socket) return;
+                                dispatch(setGameState("Finding Opponent..."));
+                                const selectedTimeControlLabel = timeControl?.label || timeConfig.RAPID1.label;
+                                const timeControlToSend = Object.keys(timeConfig).find(
+                                    (key) => timeConfig[key as keyof typeof timeConfig].label === selectedTimeControlLabel
+                                ) || 'RAPID1';
+                                socket.send(JSON.stringify({ type: INIT_GAME, payload: { timeControl: timeControlToSend, rating: yourRating } }));
+                            }}
+                        >
+                            {gameId ? (playerColor ? "Game in Progress" : "Observing") : "Play Chess"}
+                        </Button>
+                        {gameId && playerColor && ( /* Only show Resign/Draw if in a game as a player */
+                            <>
+                                <Button variant="outline" className="w-full" onClick={() => console.log("Resign clicked (placeholder)")}>Resign</Button>
+                                <Button variant="outline" className="w-full" onClick={() => console.log("Offer Draw clicked (placeholder)")}>Offer Draw</Button>
+                            </>
+                        )}
+                    </div>
+                </ResizablePanel>
+            </ResizablePanelGroup>
         </div>
     );
 };
